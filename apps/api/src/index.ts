@@ -26,6 +26,7 @@ import botRoutes from './routes/bot'; import adminRouter from './routes/admin';
         'http://localhost:5174',
         'http://127.0.0.1:5173',
         'http://127.0.0.1:5174',
+        'http://92.205.163.182:5173'
       ];
 
       // İstersen wildcard: herhangi bir localhost:5xxx (Vite)
@@ -46,7 +47,7 @@ import botRoutes from './routes/bot'; import adminRouter from './routes/admin';
   app.get('/health', (_req, res) => res.json({ ok: true }));
   app.use('/auth', authRoutes);
   app.use('/agents', agentsRouter);
-    app.use('/tickets', ticketRoutes);
+  app.use('/tickets', ticketRoutes);
   app.use(express.json());
   app.use('/bot', botRoutes);
   app.get('/debug/db', async (_req, res) => {
