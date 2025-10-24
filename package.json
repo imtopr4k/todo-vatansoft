@@ -1,0 +1,12 @@
+{
+  "name": "telegramTodo-monorepo",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:web": "pnpm --filter @telegramtodo/web dev",
+    "dev:api": "pnpm --filter @telegramtodo/api dev",
+    "dev:bot": "pnpm --filter @telegramtodo/bot dev",
+    "build": "pnpm -r build"
+  }
+}
