@@ -26,7 +26,8 @@ import botRoutes from './routes/bot'; import adminRouter from './routes/admin';
         'http://localhost:5174',
         'http://127.0.0.1:5173',
         'http://127.0.0.1:5174',
-        'http://92.205.163.182:5173'
+        'http://92.205.163.182:5173',
+        'https://todo.vatansoft.net'
       ];
 
       // İstersen wildcard: herhangi bir localhost:5xxx (Vite)
