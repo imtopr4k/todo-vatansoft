@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   api:
     build: ./apps/api
@@ -9,7 +7,7 @@ services:
     environment:
       MONGO_URI: ${MONGO_URI:-mongodb+srv://erenasik1211_db_user:R4RSDeFPjeSXxB10@telegramtodo.gnsvcdl.mongodb.net/TelegramToDo?retryWrites=true&w=majority}
     ports:
-      - "8089:8089"
+      - "8990:8990"
 
   bot:
     build: ./apps/bot
@@ -17,7 +15,7 @@ services:
     env_file:
       - ./.env.bot
     environment:
-      API_BASE_URL: http://api:8089
+      API_BASE_URL: http://api:8990
     depends_on:
       - api
 
@@ -27,7 +25,7 @@ services:
     env_file:
       - ./.env.web
     environment:
-      VITE_API_BASE_URL: http://92.205.163.182:8089
+      VITE_API_BASE_URL: http://77.37.54.190:8990
     ports:
       - "5173:5173"
     depends_on:
