@@ -144,7 +144,7 @@ r.post('/:id/unreachable', async (req, res) => {
     try {
       const actor = await Agent.findById(auth.sub);
       if (actor?.telegramUserId) {
-        await sendDM(actor.telegramUserId, 'Ulaşılamadı işaretledin. Lütfen gerekli takibi yap.');
+        await sendDM(actor.telegramUserId, `Ulaşılamadı işaretledin. Lütfen gerekli takibi yap. \n ${t.telegram.text}`);
       }
     } catch (e) {
       console.error('[tickets:unreachable] dm failed', e);
