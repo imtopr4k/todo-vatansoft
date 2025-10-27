@@ -1,1 +1,4 @@
 .DS_Store
+.env.api
+.env.web
+.env.bot
