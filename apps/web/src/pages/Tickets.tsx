@@ -63,9 +63,10 @@ function TicketCard({
   onUnreachable,
   onDelete,
   canDelete,
-  canReassign,
   agents,
   onReassign,
+  currentUserId,
+  isSuperAgent,
 }: {
   it: Ticket;
   query: string;
@@ -73,12 +74,19 @@ function TicketCard({
   onUnreachable: (id: string) => void;
   onDelete: (id: string) => void;
   canDelete: boolean;
-  canReassign: boolean;
   agents: AgentLite[];
   onReassign: (ticketId: string, toAgentId: string) => void;
+  currentUserId: string;
+  isSuperAgent: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  
+
+  // normalize assignedTo for comparisons and display
+  const assignedToId = typeof it.assignedTo === 'string' ? it.assignedTo : (it.assignedTo as any)?.id;
+  const assignedToName = typeof it.assignedTo === 'string' ? undefined : (it.assignedTo as any)?.name;
+
+  const canReassign = isSuperAgent || (assignedToId && currentUserId && String(assignedToId) === String(currentUserId));
+
   const sender =
     it.telegram?.from?.displayName ||
     [it.telegram?.from?.firstName, it.telegram?.from?.lastName].filter(Boolean).join(' ') ||
@@ -99,25 +107,53 @@ function TicketCard({
       <div className="msg">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <strong>Atanan:</strong>
-          {(
-            it.status === 'resolved' || it.status === 'unreachable' ? it.assignedTo?.name || 'Atanmamış':
-            <div style={{ marginLeft: 12 }}>
-              <select
-                value={it.assignedTo || ''}
-                onChange={(e) => onReassign(it.id, e.target.value)}
-                className="select"
-              >
-                <option value="">{it.assignedTo?.name || 'Atanmamış'}</option>
-                {agents
-                  .slice()
-                  .sort((a, b) => Number(a.externalUserId) - Number(b.externalUserId))
-                  .map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.isActive ? '● ' : '○ '}
-                      {a.name} ({a.externalUserId})
-                    </option>
-                  ))}
-              </select>
+          {it.status === 'resolved' || it.status === 'unreachable' || !canReassign ? (
+            assignedToName || 'Atanmamış'
+          ) : (
+            <div style={{ marginLeft: 12, position: 'relative', minWidth: '220px' }}>
+              <div style={{
+                position: 'relative',
+                backgroundColor: 'var(--background-light)',
+                borderRadius: '8px',
+                border: '1px solid var(--border-color)',
+              }}>
+                <select
+                  value={assignedToId || ''}
+                  onChange={(e) => onReassign(it.id, e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 14px',
+                    appearance: 'none',
+                    border: 'none',
+                    background: 'transparent',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    zIndex: 1,
+                    position: 'relative',
+                  }}
+                >
+                  <option value="">{assignedToName || 'Atanmamış'}</option>
+                  {agents
+                    .slice()
+                    .sort((a, b) => Number(a.externalUserId) - Number(b.externalUserId))
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.isActive ? '● ' : '○ '}
+                        {a.name} ({a.externalUserId})
+                      </option>
+                    ))}
+                </select>
+                <div style={{
+                  position: 'absolute',
+                  right: '10px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  pointerEvents: 'none',
+                  color: 'var(--text-secondary)'
+                }}>
+                  ▾
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -170,14 +206,12 @@ function TicketCard({
     </div>
   );
 }
-
 export default function Tickets() {
   const user = me();
   const isSupervisor = user?.role === 'supervisor';
-  const canReassign = ['1', '1009'].includes(String(user?.externalUserId || ''));
 
   const [loading, setLoading] = useState(true);
-const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
   // toolbar state
   const [status, setStatus] = useState<Status>('all');
   const [scopeMine, setScopeMine] = useState(user?.role !== 'supervisor');
@@ -194,10 +228,19 @@ const [refreshKey, setRefreshKey] = useState(0);
   // agents (dropdown için) — HOOK içerde!
   const [agents, setAgents] = useState<AgentLite[]>([]);
 
+  // determine if current user is special agent (1 or 1009) by looking up from agents list
+  const currentAgent = agents.find((a) => a.id === user?.id);
+  const effectiveIsSuperAgent = isSupervisor || !!(currentAgent && ['1', '1009'].includes(String(currentAgent.externalUserId)));
+
   // modal state
   const [resolveOpen, setResolveOpen] = useState(false);
   const [resolveId, setResolveId] = useState<string | undefined>();
   const [resolveText, setResolveText] = useState('');
+  const [unreachableOpen, setUnreachableOpen] = useState(false);
+  const [unreachableId, setUnreachableId] = useState<string | undefined>();
+  const [unreachableText, setUnreachableText] = useState('Ulaşılamadı wp üzerinden iletişime geçildi');
+  const [scheduleDate, setScheduleDate] = useState(new Date().toISOString().split('T')[0]);
+  const [scheduleTime, setScheduleTime] = useState('09:00');
 
   // ajanları bir kere çek
   useEffect(() => {
@@ -235,8 +278,35 @@ function refresh() {
 
   // actions
   async function unreachable(id: string) {
-    await api(`/tickets/${id}/unreachable`, { method: 'POST' });
-    setPage((p) => p);
+    setUnreachableId(id);
+    setUnreachableOpen(true);
+  }
+
+  async function submitUnreachable() {
+    if (!unreachableId) return;
+    const raw = unreachableText.trim();
+    if (!raw) return;
+
+    let scheduleDateTime = null;
+    if (scheduleDate && scheduleTime) {
+      scheduleDateTime = new Date(`${scheduleDate}T${scheduleTime}`).toISOString();
+    }
+
+    await api(`/tickets/${unreachableId}/unreachable`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        resolutionText: raw,
+        scheduleDateTime: scheduleDateTime
+      }),
+    });
+
+    setUnreachableOpen(false);
+    setUnreachableId(undefined);
+    setUnreachableText('Ulaşılamadı wp üzerinden iletişime geçildi');
+    setScheduleDate('');
+    setScheduleTime('');
+    refresh();
   }
 
   async function deleteTicket(id: string) {
@@ -391,7 +461,7 @@ function refresh() {
           </>
         ) : items.length ? (
           items.map((it) => (
-            <TicketCard
+        <TicketCard
               key={it.id}
               it={it}
               query={qd}
@@ -399,9 +469,10 @@ function refresh() {
               onUnreachable={unreachable}
               onDelete={deleteTicket}
               canDelete={deletePermission}
-              canReassign={canReassign}
               agents={agents}
               onReassign={onReassign}
+          currentUserId={user?.id || ''}
+          isSuperAgent={effectiveIsSuperAgent}
             />
           ))
         ) : (
@@ -424,6 +495,125 @@ function refresh() {
           </button>
           <button className="btn btn-success" onClick={submitResolve}>
             Gönder
+          </button>
+        </div>
+      </Modal>
+      <Modal open={unreachableOpen} title="Ulaşılamadı" onClose={() => setUnreachableOpen(false)}>
+        <div style={{ 
+          backgroundColor: 'var(--background-light)',
+          padding: '1.5rem',
+          borderRadius: '8px',
+          marginBottom: '1.5rem'
+        }}>
+          <div className="muted" style={{ marginBottom: '1rem' }}>Gruba Gönderilecek Mesaj</div>
+          <textarea 
+            value={unreachableText} 
+            onChange={(e) => setUnreachableText(e.target.value)}
+            style={{
+              width: '100%',
+              minHeight: '80px',
+              padding: '0.75rem',
+              borderRadius: '6px',
+              border: '1px solid var(--border-color)',
+              backgroundColor: 'var(--background)',
+              resize: 'vertical'
+            }}
+          />
+        </div>
+
+        <div style={{ 
+          backgroundColor: 'var(--background-light)',
+          padding: '1.5rem',
+          borderRadius: '8px'
+        }}>
+          <div style={{ marginBottom: '1rem' }}>
+            <div className="muted" style={{ marginBottom: '0.5rem' }}>
+              Bot'un Size Mesaj Göndereceği Zaman
+            </div>
+            <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+              Seçtiğiniz saatte bot size hatırlatma mesajı gönderecektir
+            </div>
+          </div>
+
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: '1fr 1fr', 
+            gap: '1rem',
+            marginBottom: '0.5rem'
+          }}>
+            <div>
+              <label style={{ 
+                display: 'block', 
+                marginBottom: '0.5rem',
+                fontSize: '0.9rem',
+                color: 'var(--text-secondary)'
+              }}>
+                Tarih
+              </label>
+              <input
+                type="date"
+                value={scheduleDate}
+                onChange={(e) => setScheduleDate(e.target.value)}
+                min={new Date().toISOString().split('T')[0]}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  backgroundColor: 'var(--background)'
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ 
+                display: 'block', 
+                marginBottom: '0.5rem',
+                fontSize: '0.9rem',
+                color: 'var(--text-secondary)'
+              }}>
+                Saat
+              </label>
+              <input
+                type="time"
+                value={scheduleTime}
+                onChange={(e) => setScheduleTime(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  backgroundColor: 'var(--background)'
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'flex-end', 
+          gap: '1rem', 
+          marginTop: '1.5rem'
+        }}>
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => setUnreachableOpen(false)}
+            style={{
+              padding: '0.75rem 1.5rem',
+              borderRadius: '6px'
+            }}
+          >
+            İptal
+          </button>
+          <button 
+            className="btn btn-success" 
+            onClick={submitUnreachable}
+            style={{
+              padding: '0.75rem 1.5rem',
+              borderRadius: '6px'
+            }}
+          >
+            Kaydet ve Gönder
           </button>
         </div>
       </Modal>

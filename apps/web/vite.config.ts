@@ -8,7 +8,8 @@ export default defineConfig({
         host: '0.0.0.0',
         port: 5173,
         hmr: {
-            host: 'todo.vatansoft.net',
+            // host: 'todo.vatansoft.net',
+             host: 'http://localhost',
             port: 5173,
             protocol: 'http',
         },

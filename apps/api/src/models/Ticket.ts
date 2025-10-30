@@ -5,7 +5,7 @@ const TicketSchema = new Schema({
   telegram: {
     chatId: { type: Number, required: true },
     messageId: { type: Number, required: true },
-
+    resolutionMessageId: { type: Number },
     // Yeni alanlar: web’de görselleştirme için
     text: { type: String },                                        // Mesaj içeriği
     from: {                                                        // Gönderen bilgisi
@@ -20,6 +20,7 @@ const TicketSchema = new Schema({
   assignedTo: { type: Types.ObjectId, ref: 'Agent', required: true },
   assignedAt: { type: Date, default: Date.now },
   resolutionText: { type: String },
+  scheduledDMAt: { type: Date },
   history: [{
     at: { type: Date, default: Date.now },
     byAgentId: { type: Types.ObjectId, ref: 'Agent' },

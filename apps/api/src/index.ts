@@ -7,11 +7,13 @@ import { env } from './env';
 import authRoutes from './routes/auth';
 import ticketRoutes from './routes/tickets';
 import agentsRouter from './routes/agents';
-import botRoutes from './routes/bot'; import adminRouter from './routes/admin';
-
+import botRoutes from './routes/bot'; 
+import adminRouter from './routes/admin';
+import { initScheduler } from './services/scheduler';
 
 (async () => {
   await connectMongo();
+  await initScheduler();
 
   const app = express();
 

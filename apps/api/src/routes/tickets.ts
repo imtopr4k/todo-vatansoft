@@ -124,6 +124,7 @@ r.post('/:id/resolve', async (req, res) => {
 r.post('/:id/unreachable', async (req, res) => {
   try {
     const { id } = req.params;
+    const { resolutionText, scheduleDateTime } = req.body as { resolutionText: string; scheduleDateTime?: string };
     const auth = (req as any).auth;
 
     const t = await Ticket.findById(id);
@@ -132,22 +133,36 @@ r.post('/:id/unreachable', async (req, res) => {
       return res.status(403).json({ message: 'Not your ticket' });
     }
 
+    const msg = String((resolutionText ?? '')).trim();
     t.status = 'unreachable';
-    await t.save();
+    t.resolutionText = msg;
 
+    // Grup mesajını hemen gönder
     try {
-      await sendReply(t.telegram.chatId, t.telegram.messageId, 'wp üzerinden iletişime geçildi');
+      if (t.telegram?.chatId && t.telegram?.messageId) {
+        await sendReply(t.telegram.chatId, t.telegram.messageId, msg || 'wp üzerinden iletişime geçildi');
+      }
     } catch (e) {
       console.error('[tickets:unreachable] group send failed', e);
     }
 
-    try {
-      const actor = await Agent.findById(auth.sub);
-      if (actor?.telegramUserId) {
-        await sendDM(actor.telegramUserId, `Ulaşılamadı işaretledin. Lütfen gerekli takibi yap. \n ${t.telegram.text}`);
+    // Eğer zamanlama varsa kaydet ve DM'i zamanla
+    if (scheduleDateTime) {
+      t.scheduledDMAt = new Date(scheduleDateTime);
+    }
+
+    await t.save();
+
+    // Eğer zamanlama yoksa DM'i hemen gönder
+    if (!scheduleDateTime) {
+      try {
+        const actor = await Agent.findById(auth.sub);
+        if (actor?.telegramUserId && t.telegram?.text) {
+          await sendDM(actor.telegramUserId, `Lütfen ${t.telegram.text} konusu ile ilgili müşteri ile iletişime geç.`);
+        }
+      } catch (e) {
+        console.error('[tickets:unreachable] dm failed', e);
       }
-    } catch (e) {
-      console.error('[tickets:unreachable] dm failed', e);
     }
 
     res.json({ ok: true });
@@ -183,17 +198,18 @@ r.put('/:id/assign', async (req, res) => {
 
     if (!toAgentId) return res.status(400).json({ message: 'toAgentId zorunlu' });
 
-    // isteyen kişi supervisor mı ya da externalUserId'si 1 veya 1009 mu?
-    const requester = await Agent.findById(auth.sub).lean();
-    const canReassign =
-      auth.role === 'supervisor' ||
-      ['1', '1009'].includes(String(requester?.externalUserId));
-
-    if (!canReassign) return res.status(403).json({ message: 'Yetkisiz' });
-
     // Bilet ve ajanlar
     const t = await Ticket.findById(id);
     if (!t) return res.status(404).json({ message: 'Ticket bulunamadı' });
+
+    // Atama izni kontrolü
+    const requester = await Agent.findById(auth.sub).lean();
+    const isSuperAgent = auth.role === 'supervisor' || ['1', '1009'].includes(String(requester?.externalUserId));
+    
+    // Eğer süper ajan değilse, sadece kendisine atanmış görevleri yeniden atayabilir
+    if (!isSuperAgent && String(t.assignedTo) !== auth.sub) {
+      return res.status(403).json({ message: 'Bu görevi yeniden atama yetkiniz yok' });
+    }
 
     const fromAgent = t.assignedTo ? await Agent.findById(t.assignedTo).lean() : null;
     const toAgent = await Agent.findById(toAgentId).lean();
