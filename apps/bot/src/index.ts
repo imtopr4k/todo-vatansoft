@@ -34,8 +34,8 @@ function pick(text: string | undefined, labels: string | string[]): string | und
 
 function parseTemplate(text?: string): Parsed {
   return {
-    id: pick(text, 'id'),
-    iletisim: pick(text, 'iletisim|iletişim|telefon|wp|whatsapp|İletişim'),
+    id: pick(text, 'id |ID |Id'),
+    iletisim: pick(text, 'İletisim|iletisim|iletişim|telefon|wp|whatsapp|İletişim'),
     detay: pick(text, 'detay'),
     proje: pick(text, 'proje'),
     ekstra: pick(text, 'ekstra|isim|not'),
@@ -44,8 +44,8 @@ function parseTemplate(text?: string): Parsed {
 
 function missingFields(p: Parsed): string[] {
   const miss: string[] = [];
-  if (!p.id) miss.push('id');
-  if (!p.iletisim) miss.push('iletisim');
+  if (!p.id) miss.push('id |ID |Id');
+  if (!p.iletisim) miss.push('İletisim|iletisim|iletişim|telefon|wp|whatsapp|İletişim');
   if (!p.detay) miss.push('detay');
   return miss;
 }
@@ -101,7 +101,7 @@ bot.on('message', async (ctx) => {
 
   if (miss.length > 0) {
     // Özellikle 'id' yoksa istenen mesajı ver
-    if (miss.includes('id')) {
+    if (miss.includes('id |ID |Id')) {
       return ctx.reply('*id alanı zorunludur*', {
         parse_mode: 'Markdown',
         reply_to_message_id: ctx.message?.message_id

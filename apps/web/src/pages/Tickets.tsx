@@ -148,7 +148,7 @@ function TicketCard({
       )}
 
       <div className="card-actions">
-        <button onClick={() => onResolve(it)} disabled={it.status !== 'open'} className="btn btn-success">
+        <button onClick={() => onResolve(it)} disabled={it.status !== 'open' || it.status === 'unreachable'} className="btn btn-success">
           ✅ Çözümlendi
         </button>
 

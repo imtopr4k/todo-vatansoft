@@ -70,7 +70,7 @@ import botRoutes from './routes/bot'; import adminRouter from './routes/admin';
   });
 
   const server = http.createServer(app);
-  const io = new SocketIOServer(server, { cors: { origin: '*' } });
+  const io = new SocketIOServer(server, { cors: { origin: 'http://localhost:5173' } });
   io.on('connection', () => {
     console.log('[socket] client connected');
   });
