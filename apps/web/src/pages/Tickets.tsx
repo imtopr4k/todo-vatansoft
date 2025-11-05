@@ -1,5 +1,5 @@
 // apps/web/src/pages/Tickets.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { api } from '../api';
 import type { Ticket } from '../types';
 import { me } from '../auth';
@@ -55,6 +55,93 @@ function useDebounced<T>(value: T, ms: number) {
   return v;
 }
 
+// Custom agent dropdown used inside TicketCard to replace native select
+function TicketAgentDropdown({
+  ticketId,
+  assignedToId,
+  assignedToName,
+  agents,
+  onReassign,
+  triggerLabel,
+}: {
+  ticketId: string;
+  assignedToId: string | undefined;
+  assignedToName?: string | undefined;
+  agents: AgentLite[];
+  onReassign: (ticketId: string, toAgentId: string) => void;
+  triggerLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const [anchor, setAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!open) return;
+      const trg = triggerRef.current;
+      if (trg && !trg.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onEsc(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('click', onDocClick);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
+  function toggle() {
+    const trg = triggerRef.current;
+    if (trg) {
+      const r = trg.getBoundingClientRect();
+      setAnchor({ top: r.bottom + window.scrollY + 6, left: r.left + window.scrollX, width: Math.max(220, r.width) });
+    }
+    setOpen((s) => !s);
+  }
+
+  return (
+    <>
+      <div ref={triggerRef} className="agent-dropdown-trigger assigned-select" onClick={toggle} role="button" tabIndex={0}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ fontWeight: 700 }}>{triggerLabel}</div>
+        </div>
+      </div>
+
+      {open && anchor && (
+        <ul
+          className="agent-dropdown-menu"
+          style={{ top: anchor.top, left: anchor.left, minWidth: anchor.width, zIndex: 9999 }}
+        >
+          {agents
+            .slice()
+            .filter((a) => String(a.externalUserId) !== '1')
+            .sort((a, b) => Number(a.externalUserId) - Number(b.externalUserId))
+            .map((a) => (
+              <li
+                key={a.id}
+                className="agent-dropdown-item"
+                onClick={() => {
+                  onReassign(ticketId, a.id);
+                  setOpen(false);
+                }}
+              >
+                <div className="avatar-sm" style={{ width: 28, height: 28, borderRadius: 8, fontWeight: 700 }}>{a.name?.[0]}</div>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ fontWeight: 700 }}>{a.name}</div>
+                  <div className="inline-muted" style={{ fontSize: 12 }}>{a.externalUserId}</div>
+                </div>
+              </li>
+            ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
 /** Kart bileşeni */
 function TicketCard({
   it,
@@ -85,6 +172,12 @@ function TicketCard({
   const assignedToId = typeof it.assignedTo === 'string' ? it.assignedTo : (it.assignedTo as any)?.id;
   const assignedToName = typeof it.assignedTo === 'string' ? undefined : (it.assignedTo as any)?.name;
 
+  // find assigned agent from agents list to show online status
+  const assignedAgent = agents.find(
+    (a) => String(a.id) === String(assignedToId) || String(a.externalUserId) === String(assignedToId)
+  );
+  const agentActive = !!assignedAgent?.isActive;
+
   const canReassign = isSuperAgent || (assignedToId && currentUserId && String(assignedToId) === String(currentUserId));
 
   const sender =
@@ -95,113 +188,81 @@ function TicketCard({
   const text = it.telegram?.text || '(Mesaj içeriği yok)';
 
   return (
-    <div className="card">
-      <div className="card-head">
-        <div className="sender">{sender}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span className="inline-muted">{timeAgo(it.assignedAt)}</span>
-          <StatusBadge status={it.status} />
+    <div className="ticket">
+      <div className="card ticket-grid">
+          <div className="avatar-col">
+          <div
+            className={`status-dot ${agentActive ? 'filled' : ''}`}
+            title={assignedAgent ? `${assignedAgent.name} — ${agentActive ? 'Aktif' : 'Pasif'}` : it.telegram?.from?.username || ''}
+          />
         </div>
-      </div>
 
-      <div className="msg">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <strong>Atanan:</strong>
-          {it.status === 'resolved' || it.status === 'unreachable' || !canReassign ? (
-            assignedToName || 'Atanmamış'
-          ) : (
-            <div style={{ marginLeft: 12, position: 'relative', minWidth: '220px' }}>
-              <div style={{
-                position: 'relative',
-                backgroundColor: 'var(--background-light)',
-                borderRadius: '8px',
-                border: '1px solid var(--border-color)',
-              }}>
-                <select
-                  value={assignedToId || ''}
-                  onChange={(e) => onReassign(it.id, e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '10px 14px',
-                    appearance: 'none',
-                    border: 'none',
-                    background: 'transparent',
-                    fontSize: '14px',
-                    cursor: 'pointer',
-                    zIndex: 1,
-                    position: 'relative',
-                  }}
-                >
-                  <option value="">{assignedToName || 'Atanmamış'}</option>
-                  {agents
-                    .slice()
-                    .sort((a, b) => Number(a.externalUserId) - Number(b.externalUserId))
-                    .map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.isActive ? '● ' : '○ '}
-                        {a.name} ({a.externalUserId})
-                      </option>
-                    ))}
-                </select>
-                <div style={{
-                  position: 'absolute',
-                  right: '10px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  pointerEvents: 'none',
-                  color: 'var(--text-secondary)'
-                }}>
-                  ▾
-                </div>
+        <div>
+          <div className="card-head">
+            <div className="sender"><span>Temsilci : </span>{sender}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="inline-muted">{timeAgo(it.assignedAt)}</span>
+              <StatusBadge status={it.status} />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 10 }}>
+            <strong style={{ marginRight: 8 }}>Atanan</strong>
+            {it.status === 'resolved' || it.status === 'unreachable' || !canReassign ? (
+              <div className="assigned-pill">
+                <div className="assigned-name">{assignedToName || 'Atanmamış'}</div>
               </div>
+            ) : (
+              <TicketAgentDropdown
+                ticketId={it.id}
+                assignedToId={assignedToId}
+                assignedToName={assignedToName}
+                agents={agents}
+                onReassign={onReassign}
+                triggerLabel={assignedToName || 'Atanmamış'}
+              />
+            )}
+          </div>
+
+          <div className="msg">
+            {highlight(text, query)}
+            <div style={{ marginTop: 10, color: 'var(--muted)' }}>Çözüm Metni: {it.resolutionText ? it.resolutionText : 'Yok'}</div>
+          </div>
+
+          {text.length > 180 && (
+            <div style={{ marginTop: 8 }}>
+              <button
+                className="chip small"
+                onClick={(e: any) => {
+                  const btn = e.currentTarget as HTMLElement;
+                  setExpanded((prev) => {
+                    const next = !prev;
+                    const card = btn.closest('.card') as HTMLElement | null;
+                    const msg = card?.querySelector('.msg') as HTMLElement | null;
+                    if (msg) msg.style.maxHeight = next ? 'none' : '';
+                    return next;
+                  });
+                }}
+              >
+                {expanded ? 'Gizle' : 'Devamını göster'}
+              </button>
             </div>
           )}
         </div>
 
-        {highlight(text, query)}
-        <br />
-        <span>Çözüm Metni: {it.resolutionText ? it.resolutionText : 'Yok'}</span>
-      </div>
-
-      {text.length > 180 && (
-        <div style={{ marginTop: 6 }}>
-          <button
-            className="chip"
-            onClick={(e: any) => {
-              const btn = e.currentTarget as HTMLElement;
-              setExpanded((prev) => {
-                const next = !prev;
-                const card = btn.closest('.card') as HTMLElement | null;
-                const msg = card?.querySelector('.msg') as HTMLElement | null;
-                if (msg) msg.style.maxHeight = next ? 'none' : '';
-                return next;
-              });
-            }}
-          >
-            {expanded ? 'Gizle' : 'Devamını göster'}
+        <div className="actions-col">
+          <button onClick={() => onResolve(it)} disabled={it.status !== 'open' && it.status !== 'unreachable'} className="btn primary">
+            ✅ Çözümlendi
           </button>
+          <button onClick={() => onUnreachable(it.id)} disabled={it.status !== 'open'} className="btn danger">
+            🚫 Ulaşılamadı
+          </button>
+          {canDelete && (
+            <button onClick={() => onDelete(it.id)} className="btn ghost" title="Bu görevi sil">
+              🗑️ Sil
+            </button>
+          )}
         </div>
-      )}
-
-      <div className="card-actions">
-        <button onClick={() => onResolve(it)} disabled={it.status !== 'open' && it.status !== 'unreachable'} className="btn btn-success">
-          ✅ Çözümlendi
-        </button>
-
-        <button onClick={() => onUnreachable(it.id)} disabled={it.status !== 'open'} className="btn btn-danger">
-          🚫 Ulaşılamadı
-        </button>
-
-        {canDelete && (
-          <button
-            onClick={() => onDelete(it.id)}
-            className="btn"
-            style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}
-            title="Bu görevi sil"
-          >
-            🗑️ Sil
-          </button>
-        )}
       </div>
     </div>
   );
@@ -218,6 +279,7 @@ export default function Tickets() {
   const [sort, setSort] = useState<Sort>('newest');
   const [q, setQ] = useState('');
   const qd = useDebounced(q, 250);
+  const [agentFilter, setAgentFilter] = useState<string>('');
 
   // pagination state
   const [page, setPage] = useState(1);
@@ -372,6 +434,13 @@ function refresh() {
 
   const pages = Math.max(1, Math.ceil(total / 10));
   const deletePermission = isSupervisor;
+  // apply agent filter client-side for supervisors
+  const filteredItems = agentFilter
+    ? items.filter((it) => {
+        const aid = typeof it.assignedTo === 'string' ? it.assignedTo : (it.assignedTo as any)?.id;
+        return String(aid) === String(agentFilter);
+      })
+    : items;
 
   return (
     <>
@@ -396,9 +465,11 @@ function refresh() {
             ))}
           </div>
 
+          {/* view mode: list only (no box/list toggle) */}
+
           <div className="toggle" title="Kapsam">
             <button
-              className={scopeMine ? 'active' : ''}
+              className={`seg-btn ${scopeMine ? 'active' : ''}`}
               onClick={() => {
                 setScopeMine(true);
                 setPage(1);
@@ -407,7 +478,7 @@ function refresh() {
               Benim
             </button>
             <button
-              className={!scopeMine ? 'active' : ''}
+              className={`seg-btn ${!scopeMine ? 'active' : ''}`}
               onClick={() => {
                 setScopeMine(false);
                 setPage(1);
@@ -445,7 +516,7 @@ function refresh() {
           </div>
         </div>
 
-        {/* Sonuçlar */}
+        {/* Sonuçlar (list view only) */}
         {loading ? (
           <>
             {[0, 1, 2].map((i) => (
@@ -459,21 +530,22 @@ function refresh() {
               </div>
             ))}
           </>
-        ) : items.length ? (
-          items.map((it) => (
-        <TicketCard
-              key={it.id}
-              it={it}
-              query={qd}
-              onResolve={openResolveModal}
-              onUnreachable={unreachable}
-              onDelete={deleteTicket}
-              canDelete={deletePermission}
-              agents={agents}
-              onReassign={onReassign}
-          currentUserId={user?.id || ''}
-          isSuperAgent={effectiveIsSuperAgent}
-            />
+        ) : filteredItems.length ? (
+          filteredItems.map((it) => (
+            <div key={it.id} style={{ marginBottom: 14 }}>
+              <TicketCard
+                it={it}
+                query={qd}
+                onResolve={openResolveModal}
+                onUnreachable={unreachable}
+                onDelete={deleteTicket}
+                canDelete={deletePermission}
+                agents={agents}
+                onReassign={onReassign}
+                currentUserId={user?.id || ''}
+                isSuperAgent={effectiveIsSuperAgent}
+              />
+            </div>
           ))
         ) : (
           <div className="card" style={{ textAlign: 'center', color: 'var(--muted)' }}>

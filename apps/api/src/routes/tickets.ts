@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../middlewares/auth';
 import { Ticket } from '../models/Ticket';
 import { Agent } from '../models/Agent';
+import { Types } from 'mongoose';
 import { sendReply, sendDM } from '../services/telegram';
 
 const r = Router();
@@ -146,15 +147,27 @@ r.post('/:id/unreachable', async (req, res) => {
       console.error('[tickets:unreachable] group send failed', e);
     }
 
-    // Eğer zamanlama varsa kaydet ve DM'i zamanla
+    // Eğer zamanlama varsa, parse et ve eğer geçmişe tarihlendiyse DM'i hemen gönder,
+    // gelecekte bir tarihse scheduledDMAt olarak kaydet
+    let scheduledDate: Date | null = null;
     if (scheduleDateTime) {
-      t.scheduledDMAt = new Date(scheduleDateTime);
+      const parsed = new Date(scheduleDateTime);
+      if (!isNaN(parsed.getTime())) {
+        scheduledDate = parsed;
+      } else {
+        console.warn('[tickets:unreachable] invalid scheduleDateTime, will treat as immediate', scheduleDateTime);
+      }
     }
 
-    await t.save();
+    if (scheduledDate && scheduledDate.getTime() > Date.now()) {
+      // future date -> persist and scheduler will pick it up
+      t.scheduledDMAt = scheduledDate;
+      await t.save();
+    } else {
+      // no schedule or schedule in past/invalid -> don't persist scheduledDMAt and send DM now
+      t.scheduledDMAt = undefined;
+      await t.save();
 
-    // Eğer zamanlama yoksa DM'i hemen gönder
-    if (!scheduleDateTime) {
       try {
         const actor = await Agent.findById(auth.sub);
         if (actor?.telegramUserId && t.telegram?.text) {
@@ -198,26 +211,70 @@ r.put('/:id/assign', async (req, res) => {
 
     if (!toAgentId) return res.status(400).json({ message: 'toAgentId zorunlu' });
 
-    // Bilet ve ajanlar
-    const t = await Ticket.findById(id);
-    if (!t) return res.status(404).json({ message: 'Ticket bulunamadı' });
+  // Bilet ve ajanlar
+  const t = await Ticket.findById(id);
+  if (!t) return res.status(404).json({ message: 'Ticket bulunamadı' });
+
+
+  console.log('[tickets:assign] incoming', { ticketId: id, authSub: auth.sub, toAgentId, assignedToBefore: String(t.assignedTo) });
 
     // Atama izni kontrolü
-    const requester = await Agent.findById(auth.sub).lean();
+  const requester = await Agent.findById(auth.sub).lean();
+  if (!requester) console.warn('[tickets:assign] requester not found for auth.sub', auth.sub);
+  else console.log('[tickets:assign] requester', { id: requester._id.toString(), externalUserId: requester.externalUserId, role: requester.role });
     const isSuperAgent = auth.role === 'supervisor' || ['1', '1009'].includes(String(requester?.externalUserId));
     
     // Eğer süper ajan değilse, sadece kendisine atanmış görevleri yeniden atayabilir
     if (!isSuperAgent && String(t.assignedTo) !== auth.sub) {
+      console.warn('[tickets:assign] forbidden - requester not allowed to reassign', { requesterId: auth.sub, ticketAssignedTo: String(t.assignedTo) });
       return res.status(403).json({ message: 'Bu görevi yeniden atama yetkiniz yok' });
     }
 
     const fromAgent = t.assignedTo ? await Agent.findById(t.assignedTo).lean() : null;
-    const toAgent = await Agent.findById(toAgentId).lean();
-    if (!toAgent) return res.status(400).json({ message: 'Hedef agent bulunamadı' });
-    // Güncelle
-    t.assignedTo = toAgent._id;
-    t.assignedAt = new Date();
-    await t.save();
+
+    // toAgentId may be either Mongo _id or an externalUserId — try both
+  let toAgent: any = null;
+  let usedFallback = false;
+  let matchedBy: 'id' | 'externalUserId' | null = null;
+    try {
+      if (Types.ObjectId.isValid(String(toAgentId))) {
+    toAgent = await Agent.findById(toAgentId).lean();
+    if (toAgent) matchedBy = 'id';
+      } else {
+        console.warn('[tickets:assign] toAgentId is not a valid ObjectId, will try externalUserId lookup', toAgentId);
+      }
+    } catch (e) {
+      console.warn('[tickets:assign] findById threw, will fallback to externalUserId', e);
+    }
+
+    if (!toAgent) {
+      toAgent = await Agent.findOne({ externalUserId: String(toAgentId) }).lean();
+      if (toAgent) matchedBy = 'externalUserId';
+      if (toAgent) usedFallback = true;
+    }
+
+    if (usedFallback) console.warn('[tickets:assign] toAgentId matched by externalUserId fallback', toAgent.externalUserId, toAgent._id);
+    if (!toAgent) {
+      console.warn('[tickets:assign] toAgent not found for toAgentId', toAgentId);
+      return res.status(400).json({ message: 'Hedef agent bulunamadı' });
+    }
+
+    console.log('[tickets:assign] resolved toAgent', { matchedBy, toAgentId: String(toAgent._id), toAgentName: toAgent.name, toAgentExternalId: String(toAgent.externalUserId) });
+
+    // Business rule: never allow assigning to externalUserId '1'
+    if (String(toAgent.externalUserId) === '1') {
+      console.warn('[tickets:assign] prevented assign to externalUserId=1');
+      return res.status(400).json({ message: 'Bu kullanıcıya atama yapılamaz' });
+    }
+  // Güncelle
+  t.assignedTo = toAgent._id;
+  t.assignedAt = new Date();
+  // push history
+  t.history = t.history || [];
+  t.history.push({ at: new Date(), byAgentId: requester?._id, action: 'reassign', note: `from ${String(fromAgent?._id || '—')} to ${String(toAgent._id)}` });
+  await t.save();
+
+  console.log('[tickets:assign] saved', { ticketId: id, assignedToAfter: String(t.assignedTo) });
 
     // Telegram’a bildir (orijinal mesaja reply)
     const fromName = fromAgent?.name || '—';
@@ -233,7 +290,7 @@ r.put('/:id/assign', async (req, res) => {
       // Bildirim düşmese de atama başarılıdır; 200 döndürmeye devam ediyoruz.
     }
 
-    return res.json({ ok: true });
+  return res.json({ ok: true, assignedTo: { id: String(toAgent._id), name: toAgent.name }, matchedBy });
   } catch (e) {
     console.error('[PUT /tickets/:id/assign] error', e);
     return res.status(500).json({ message: 'Internal error' });

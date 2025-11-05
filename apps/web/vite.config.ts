@@ -9,9 +9,12 @@ export default defineConfig({
         port: 5173,
         hmr: {
             // host: 'todo.vatansoft.net',
-             host: 'http://localhost',
+            // Use bare host without protocol. Vite will build ws:// correctly.
+            host: 'localhost',
             port: 5173,
-            protocol: 'http',
+            // protocol should be ws or wss for websocket HMR; leave default or use 'ws'
+            protocol: 'ws',
+            // protocol: 'https',
         },
     },
 });
