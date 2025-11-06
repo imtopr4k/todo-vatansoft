@@ -100,6 +100,14 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:Inter, ui-sans-
 .ticket .card{background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border: 1px solid rgba(255,255,255,0.02); position:relative; padding-left:20px}
 .ticket .card::before{content:"";position:absolute;left:12px;top:12px;bottom:12px;width:6px;border-radius:6px;background:linear-gradient(180deg,var(--accent),var(--accent-2));opacity:.95}
 .ticket .card:hover{box-shadow:0 18px 40px rgba(2,6,23,0.22);}
+
+/* status-based card accents */
+.ticket .card.status-unreachable::before{background:linear-gradient(180deg,var(--danger),#ff8a80)}
+.ticket .card.status-resolved::before{background:linear-gradient(180deg,var(--success),#34d399)}
+.ticket .card.status-open::before{background:linear-gradient(180deg,var(--accent),var(--accent-2))}
+
+.ticket .card.status-unreachable{border-color: rgba(239,68,68,0.12); box-shadow:0 12px 32px rgba(239,68,68,0.06)}
+.ticket .card.status-resolved{border-color: rgba(16,185,129,0.08); box-shadow:0 12px 32px rgba(16,185,129,0.06)}
 .ticket .avatar-lg{background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03)}
 .assigned-pill{display:inline-flex;align-items:center;gap:8px;padding:8px 10px;border-radius:12px;background:var(--glass);border:1px solid var(--border)}
 .assigned-name{font-weight:700;color:var(--text)}
@@ -120,7 +128,11 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:Inter, ui-sans-
 
 /* subtle status dot filled/hollow style */
 .status-dot{background:transparent;border:2px solid rgba(255,255,255,0.06)}
-.status-dot.filled{background:var(--success);border-color:transparent;box-shadow:0 4px 12px rgba(16,185,129,0.18)}
+
+/* Filled status-dot colors depend on ticket status */
+.status-dot.filled.status-open{background:var(--success);border-color:transparent;box-shadow:0 4px 12px rgba(16,185,129,0.18)}
+.status-dot.filled.status-resolved{background:var(--accent-2);border-color:transparent;box-shadow:0 4px 12px rgba(37,99,235,0.14)}
+.status-dot.filled.status-unreachable{background:var(--danger);border-color:transparent;box-shadow:0 4px 12px rgba(239,68,68,0.14)}
 
 .modal-backdrop{position:fixed;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0.45),rgba(0,0,0,0.6));display:grid;place-items:center;z-index:60}
 .modal{width:min(640px,94vw);background:var(--card);border-radius:14px;padding:18px;border:1px solid var(--border);box-shadow:var(--shadow)}

@@ -189,10 +189,10 @@ function TicketCard({
 
   return (
     <div className="ticket">
-      <div className="card ticket-grid">
+      <div className={`card ticket-grid status-${it.status}`}>
           <div className="avatar-col">
           <div
-            className={`status-dot ${agentActive ? 'filled' : ''}`}
+            className={`status-dot ${agentActive ? 'filled' : ''} status-${it.status}`}
             title={assignedAgent ? `${assignedAgent.name} — ${agentActive ? 'Aktif' : 'Pasif'}` : it.telegram?.from?.username || ''}
           />
         </div>
@@ -251,9 +251,11 @@ function TicketCard({
         </div>
 
         <div className="actions-col">
-          <button onClick={() => onResolve(it)} disabled={it.status !== 'open' && it.status !== 'unreachable'} className="btn primary">
+          {/* Çözümlendi butonu her durumda aktif kalsın - yeniden mesaj/güncelleme gönderebilsinler */}
+          <button onClick={() => onResolve(it)} className="btn primary">
             ✅ Çözümlendi
           </button>
+          {/* Ulaşılamadı butonu sadece açık (open) olanlarda aktif olsun; çözümlendi olanlarda pasif */}
           <button onClick={() => onUnreachable(it.id)} disabled={it.status !== 'open'} className="btn danger">
             🚫 Ulaşılamadı
           </button>
