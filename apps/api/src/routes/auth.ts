@@ -48,6 +48,34 @@ r.post('/logout', async (req, res) => {
   res.json({ ok: true });
 });
 
+// Register endpoint - create new agent
+r.post('/register', async (req, res) => {
+  try {
+    let { name, externalUserId, password, role } = req.body as { name?: string; externalUserId?: string; password?: string; role?: string };
+    if (!name || !externalUserId || !password) return res.status(400).json({ message: 'name, externalUserId ve password zorunludur' });
+    name = String(name).trim();
+    externalUserId = String(externalUserId).trim();
+    password = String(password);
+    role = role === 'Temsilci' ? 'supervisor' : 'agent';
+
+    // check existing
+    const exists = await Agent.findOne({ externalUserId });
+    if (exists) return res.status(400).json({ message: 'externalUserId zaten kayıtlı' });
+
+    const bcrypt = await import('bcryptjs');
+    const hash = await bcrypt.hash(password, 10);
+
+    const a = new Agent({ name, externalUserId: String(externalUserId), passwordHash: hash, role });
+    await a.save();
+
+    const accessToken = signAccessToken({ sub: a._id.toString(), role: a.role as any });
+    res.json({ accessToken, agent: { id: a._id, role: a.role, name: a.name } });
+  } catch (e) {
+    console.error('[auth:register] error', e);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
 r.post('/heartbeat', async (req, res) => {
   const { agentId } = req.body as { agentId: string };
   await Agent.findByIdAndUpdate(agentId, { lastActivityAt: new Date() });
