@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { Agent } from '../models/Agent';
 import { signAccessToken } from '../services/jwt';
+import { requireAuth } from '../middlewares/auth';
 
 const r = Router();
 
@@ -54,3 +55,20 @@ r.post('/heartbeat', async (req, res) => {
 });
 
 export default r;
+
+// Set active/inactive for current agent (requires auth)
+r.post('/set-active', requireAuth, async (req, res) => {
+  try {
+    const { isActive } = req.body as { isActive?: boolean };
+    const auth = (req as any).auth;
+    if (!auth || !auth.sub) return res.status(401).json({ message: 'Unauthorized' });
+    const update: any = { isActive: !!isActive };
+    if (isActive) update.lastActivityAt = new Date();
+    await Agent.findByIdAndUpdate(auth.sub, update);
+    console.log('[auth:set-active] agent', auth.sub, 'isActive=', !!isActive);
+    return res.json({ ok: true, isActive: !!isActive });
+  } catch (e) {
+    console.error('[auth:set-active] error', e);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});

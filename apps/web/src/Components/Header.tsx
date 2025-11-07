@@ -1,8 +1,48 @@
 import { me, logout } from '../auth';
+import { useEffect, useState } from 'react';
+import { api } from '../api';
+import { Link } from 'react-router-dom';
 // const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME;
 const BOT_USERNAME = 'VatansoftTeknikBot';
+
 export default function Header() {
   const user = me();
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    try {
+      const s = localStorage.getItem('theme');
+      if (s === 'dark' || s === 'light') return s;
+    } catch (e) {}
+    return 'dark';
+  });
+
+  useEffect(() => {
+    try {
+      const el = document.documentElement;
+      if (theme === 'dark') el.classList.add('dark');
+      else el.classList.remove('dark');
+      localStorage.setItem('theme', theme);
+    } catch (e) {}
+  }, [theme]);
+
+  const [isActive, setIsActive] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      try {
+        const list = await api<any[]>('/agents');
+        const meAgent = list.find((a) => String(a.id) === String(user?.id));
+        if (mounted) setIsActive(!!meAgent?.isActive);
+      } catch (e) {
+        console.warn('Could not fetch agents for header active state', e);
+      }
+    }
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, [user?.id]);
+
   function openTelegramLink() {
     if (!user?.id || !BOT_USERNAME) {
       alert('id veya BOT_USERNAME eksik.');
@@ -11,45 +51,74 @@ export default function Header() {
     const link = `https://t.me/${BOT_USERNAME}?start=aid-${user?.id}`;
     window.open(link, '_blank');
   }
+
   return (
-    <header style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '10px 16px', borderBottom: '1px solid #e5e7eb', background: '#fff',
-      position: 'sticky', top: 0, zIndex: 10
-    }}>
-      <div style={{ fontWeight: 700 }}>
-        TELEGRAMTODO
+    <header className="header">
+      <div className="header-left">
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div className="brand">TELEGRAMTODO</div>
+          <nav style={{ display: 'flex', gap: 8 }}>
+            <Link to="/tickets" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Görevler</Link>
+            <Link to="/stats" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>İstatistik</Link>
+            <Link to="/analysis" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Analiz</Link>
+          </nav>
+        </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        {/* User icon */}
-        <div style={{
-          width: 28, height: 28, borderRadius: '50%',
-          background: '#eef2ff', color: '#3730a3',
-          display: 'grid', placeItems: 'center', fontWeight: 700
-        }}>
-          {/* İsim baş harfi */}
-          {(user?.name?.[0] || 'U').toUpperCase()}
-        </div>
-        <button className="chip" onClick={openTelegramLink}>Telegram eşleştir</button>
-        {/* İsim + rol */}
-        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
-          <span style={{ fontWeight: 600 }}>{user?.name || 'Kullanıcı'}</span>
-          <small style={{ color: '#6b7280' }}>{user?.role === 'supervisor' ? 'Supervisor' : 'Agent'}</small>
-        </div>
+      <div className="header-actions">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+            title={theme === 'dark' ? 'Karanlık modu kapat' : 'Karanlık modu aç'}
+            className="btn ghost"
+            aria-label="Tema değiştir"
+          >
+            <span style={{ fontSize: 16 }}>{theme === 'dark' ? '🌙' : '☀️'}</span>
+          </button>
 
-        {/* Çıkış butonu */}
-        <button
-          onClick={logout}
-          style={{
-            marginLeft: 8, padding: '6px 10px', borderRadius: 8,
-            border: '1px solid #ef4444', background: '#ef4444', color: '#fff',
-            fontWeight: 600, cursor: 'pointer'
-          }}
-          title="Oturumu kapat"
-        >
-          Çıkış
-        </button>
+          <button className="btn" onClick={openTelegramLink} title="Telegram eşleştir">
+            Telegram
+          </button>
+
+          {/* active toggle */}
+          <button
+            className={`chip ${isActive ? 'active' : ''}`}
+            onClick={async () => {
+              if (!user?.id) return;
+              const next = !isActive;
+              // optimistic
+              setIsActive(next as boolean);
+              try {
+                await api('/auth/set-active', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ isActive: next }),
+                });
+              } catch (e) {
+                // revert on error
+                setIsActive((s) => !!s);
+                console.error('[Header] set-active failed', e);
+                alert('Durum güncellenemedi');
+              }
+            }}
+            title={isActive ? 'Aktif — tıklayarak pasif yap' : 'Pasif — tıklayarak aktif yap'}
+          >
+            {isActive ? 'Aktif' : 'Pasif'}
+          </button>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="avatar">{(user?.name?.[0] || 'U').toUpperCase()}</div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.0 }}>
+            <span style={{ fontWeight: 700 }}>{user?.name || 'Kullanıcı'}</span>
+            <small style={{ color: 'var(--muted)' }}>{user?.role === 'supervisor' ? 'Supervisor' : 'Agent'}</small>
+          </div>
+
+          <button onClick={logout} className="btn danger" style={{ marginLeft: 8 }} title="Oturumu kapat">
+            Çıkış
+          </button>
+        </div>
       </div>
     </header>
   );

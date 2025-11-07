@@ -22,8 +22,8 @@ export async function heartbeat() {
   } catch {}
 }
 
-// 60 saniyede bir aktiflik ping'i
-setInterval(heartbeat, 60_000);
+// NOTE: automatic heartbeat removed — active/inactive will be controlled from Header UI
+// If you still want a periodic heartbeat, re-enable the setInterval here.
 
 // ✅ Logout: API'ye bildir + localStorage temizle
 export async function logout() {

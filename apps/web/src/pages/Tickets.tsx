@@ -1,19 +1,27 @@
 // apps/web/src/pages/Tickets.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { api } from '../api';
 import type { Ticket } from '../types';
 import { me } from '../auth';
 import Header from '../Components/Header';
 import { Modal } from '../Components/Modal';
 
-type Status = 'all' | 'open' | 'resolved' | 'unreachable';
+type Status = 'all' | 'open' | 'resolved' | 'unreachable' | 'reported';
 type Sort = 'newest' | 'oldest';
 type AgentLite = { id: string; name: string; externalUserId: string; isActive: boolean };
 
 function StatusBadge({ status }: { status: Ticket['status'] }) {
   return (
     <span className={`badge ${status}`}>
-      {status === 'open' ? 'Açık' : status === 'resolved' ? 'Çözümlendi' : 'Ulaşılamadı'}
+      {status === 'open'
+        ? 'Açık'
+        : status === 'resolved'
+        ? 'Çözümlendi'
+        : status === 'unreachable'
+        ? 'Ulaşılamadı'
+        : status === 'reported'
+        ? 'Yazılıma İletildi'
+        : ''}
     </span>
   );
 }
@@ -55,6 +63,114 @@ function useDebounced<T>(value: T, ms: number) {
   return v;
 }
 
+// Custom agent dropdown used inside TicketCard to replace native select
+function TicketAgentDropdown({
+  ticketId,
+  assignedToId,
+  assignedToName,
+  agents,
+  onReassign,
+  triggerLabel,
+}: {
+  ticketId: string;
+  assignedToId: string | undefined;
+  assignedToName?: string | undefined;
+  agents: AgentLite[];
+  onReassign: (ticketId: string, toAgentId: string) => void;
+  triggerLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const [anchor, setAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!open) return;
+      const trg = triggerRef.current;
+      if (trg && !trg.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onEsc(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('click', onDocClick);
+    document.addEventListener('keydown', onEsc);
+    return () => {
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('keydown', onEsc);
+    };
+  }, [open]);
+
+  function toggle() {
+    const trg = triggerRef.current;
+    if (trg) {
+      const r = trg.getBoundingClientRect();
+      // Use viewport coordinates because the menu is positioned fixed
+      setAnchor({ top: r.bottom + 6, left: r.left, width: Math.max(220, r.width) });
+    }
+    setOpen((s) => !s);
+  }
+
+  // keep anchor updated while open so the fixed-position menu stays aligned with the trigger
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = () => {
+      const trg = triggerRef.current;
+      if (!trg) return;
+      const r = trg.getBoundingClientRect();
+      setAnchor({ top: r.bottom + 6, left: r.left, width: Math.max(220, r.width) });
+    };
+    const onResize = onScroll;
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+    // initial align
+    onScroll();
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <div ref={triggerRef} className="agent-dropdown-trigger assigned-select" onClick={toggle} role="button" tabIndex={0}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ fontWeight: 700 }}>{triggerLabel}</div>
+        </div>
+      </div>
+
+      {open && anchor && (
+        <ul
+          className="agent-dropdown-menu"
+          style={{ top: anchor.top, left: anchor.left, minWidth: anchor.width, zIndex: 9999 }}
+        >
+          {agents
+            .slice()
+            .filter((a) => String(a.externalUserId) !== '1')
+            .sort((a, b) => Number(a.externalUserId) - Number(b.externalUserId))
+            .map((a) => (
+              <li
+                key={a.id}
+                className="agent-dropdown-item"
+                onClick={() => {
+                  onReassign(ticketId, a.id);
+                  setOpen(false);
+                }}
+              >
+                <div className="avatar-sm" style={{ width: 28, height: 28, borderRadius: 8, fontWeight: 700 }}>{a.name?.[0]}</div>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ fontWeight: 700 }}>{a.name}</div>
+                  <div className="inline-muted" style={{ fontSize: 12 }}>{a.externalUserId}</div>
+                </div>
+              </li>
+            ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
 /** Kart bileşeni */
 function TicketCard({
   it,
@@ -63,9 +179,12 @@ function TicketCard({
   onUnreachable,
   onDelete,
   canDelete,
-  canReassign,
   agents,
   onReassign,
+  onReport,
+  onNotify,
+  currentUserId,
+  isSuperAgent,
 }: {
   it: Ticket;
   query: string;
@@ -73,12 +192,26 @@ function TicketCard({
   onUnreachable: (id: string) => void;
   onDelete: (id: string) => void;
   canDelete: boolean;
-  canReassign: boolean;
   agents: AgentLite[];
   onReassign: (ticketId: string, toAgentId: string) => void;
+  onReport: (ticketId: string) => void;
+  onNotify: (ticketId: string) => void;
+  currentUserId: string;
+  isSuperAgent: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  
+
+  // normalize assignedTo for comparisons and display
+  const assignedToId = typeof it.assignedTo === 'string' ? it.assignedTo : (it.assignedTo as any)?.id;
+  const assignedToName = typeof it.assignedTo === 'string' ? undefined : (it.assignedTo as any)?.name;
+
+  // find assigned agent from agents list to show online status
+  const assignedAgent = agents.find(
+    (a) => String(a.id) === String(assignedToId) || String(a.externalUserId) === String(assignedToId)
+  );
+
+  const canReassign = isSuperAgent || (assignedToId && currentUserId && String(assignedToId) === String(currentUserId));
+
   const sender =
     it.telegram?.from?.displayName ||
     [it.telegram?.from?.firstName, it.telegram?.from?.lastName].filter(Boolean).join(' ') ||
@@ -87,103 +220,108 @@ function TicketCard({
   const text = it.telegram?.text || '(Mesaj içeriği yok)';
 
   return (
-    <div className="card">
-      <div className="card-head">
-        <div className="sender">{sender}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span className="inline-muted">{timeAgo(it.assignedAt)}</span>
-          <StatusBadge status={it.status} />
+    <div className="ticket">
+      <div className={`card ticket-grid status-${it.status}`}>
+          <div className="avatar-col">
+          <div
+            // status-dot now reflects the ticket status (not agent activity)
+            className={`status-dot filled status-${it.status}`}
+            title={assignedAgent ? `${assignedAgent.name}` : it.telegram?.from?.username || ''}
+          />
         </div>
-      </div>
 
-      <div className="msg">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <strong>Atanan:</strong>
-          {(
-            it.status === 'resolved' || it.status === 'unreachable' ? it.assignedTo?.name || 'Atanmamış':
-            <div style={{ marginLeft: 12 }}>
-              <select
-                value={it.assignedTo || ''}
-                onChange={(e) => onReassign(it.id, e.target.value)}
-                className="select"
+        <div>
+          <div className="card-head">
+            <div className="sender"><span>Temsilci : </span>{sender}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="inline-muted">{timeAgo(it.assignedAt)}</span>
+              <StatusBadge status={it.status} />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 10 }}>
+            <strong style={{ marginRight: 8 }}>Atanan</strong>
+            {it.status === 'resolved' || it.status === 'unreachable' || !canReassign ? (
+              <div className="assigned-pill">
+                <div className="assigned-name">{assignedToName || 'Atanmamış'}</div>
+              </div>
+            ) : (
+              <TicketAgentDropdown
+                ticketId={it.id}
+                assignedToId={assignedToId}
+                assignedToName={assignedToName}
+                agents={agents}
+                onReassign={onReassign}
+                triggerLabel={assignedToName || 'Atanmamış'}
+              />
+            )}
+          </div>
+
+          <div className="msg">
+            {highlight(text, query)}
+            <div style={{ marginTop: 10, color: 'var(--muted)' }}>Çözüm Metni: {it.resolutionText ? it.resolutionText : 'Yok'}</div>
+          </div>
+
+          {text.length > 180 && (
+            <div style={{ marginTop: 8 }}>
+              <button
+                className="chip small"
+                onClick={(e: any) => {
+                  const btn = e.currentTarget as HTMLElement;
+                  setExpanded((prev) => {
+                    const next = !prev;
+                    const card = btn.closest('.card') as HTMLElement | null;
+                    const msg = card?.querySelector('.msg') as HTMLElement | null;
+                    if (msg) msg.style.maxHeight = next ? 'none' : '';
+                    return next;
+                  });
+                }}
               >
-                <option value="">{it.assignedTo?.name || 'Atanmamış'}</option>
-                {agents
-                  .slice()
-                  .sort((a, b) => Number(a.externalUserId) - Number(b.externalUserId))
-                  .map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.isActive ? '● ' : '○ '}
-                      {a.name} ({a.externalUserId})
-                    </option>
-                  ))}
-              </select>
+                {expanded ? 'Gizle' : 'Devamını göster'}
+              </button>
             </div>
           )}
         </div>
 
-        {highlight(text, query)}
-        <br />
-        <span>Çözüm Metni: {it.resolutionText ? it.resolutionText : 'Yok'}</span>
-      </div>
-
-      {text.length > 180 && (
-        <div style={{ marginTop: 6 }}>
-          <button
-            className="chip"
-            onClick={(e: any) => {
-              const btn = e.currentTarget as HTMLElement;
-              setExpanded((prev) => {
-                const next = !prev;
-                const card = btn.closest('.card') as HTMLElement | null;
-                const msg = card?.querySelector('.msg') as HTMLElement | null;
-                if (msg) msg.style.maxHeight = next ? 'none' : '';
-                return next;
-              });
-            }}
-          >
-            {expanded ? 'Gizle' : 'Devamını göster'}
+        <div className="actions-col">
+          {/* Çözümlendi butonu her durumda aktif kalsın - yeniden mesaj/güncelleme gönderebilsinler */}
+          <button onClick={() => onResolve(it)} className="btn primary">
+            ✅ Çözümlendi
           </button>
+          {/* Ulaşılamadı butonu sadece açık (open) olanlarda aktif olsun; çözümlendi olanlarda pasif */}
+          <button onClick={() => onUnreachable(it.id)} disabled={it.status !== 'open'} className="btn danger">
+            🚫 Ulaşılamadı
+          </button>
+          {/* Yazılıma ilet butonu */}
+          <button onClick={() => onReport(it.id)} className="btn" disabled={it.status === 'reported'} style={{background:'linear-gradient(90deg,#7c3aed22,#2563eb11)'}}>
+            🛠️ Yazılıma İlet
+          </button>
+          <button onClick={() => onNotify(it.id)} className="btn" style={{background:'linear-gradient(90deg,#f9731677,#f43f5e33)'}}>
+            ⚠️ Kullanıcıyı Uyar
+          </button>
+          {canDelete && (
+            <button onClick={() => onDelete(it.id)} className="btn ghost" title="Bu görevi sil">
+              🗑️ Sil
+            </button>
+          )}
         </div>
-      )}
-
-      <div className="card-actions">
-        <button onClick={() => onResolve(it)} disabled={it.status !== 'open' && it.status !== 'unreachable'} className="btn btn-success">
-          ✅ Çözümlendi
-        </button>
-
-        <button onClick={() => onUnreachable(it.id)} disabled={it.status !== 'open'} className="btn btn-danger">
-          🚫 Ulaşılamadı
-        </button>
-
-        {canDelete && (
-          <button
-            onClick={() => onDelete(it.id)}
-            className="btn"
-            style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}
-            title="Bu görevi sil"
-          >
-            🗑️ Sil
-          </button>
-        )}
       </div>
     </div>
   );
 }
-
 export default function Tickets() {
   const user = me();
   const isSupervisor = user?.role === 'supervisor';
-  const canReassign = ['1', '1009'].includes(String(user?.externalUserId || ''));
 
   const [loading, setLoading] = useState(true);
-const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
   // toolbar state
   const [status, setStatus] = useState<Status>('all');
   const [scopeMine, setScopeMine] = useState(user?.role !== 'supervisor');
   const [sort, setSort] = useState<Sort>('newest');
   const [q, setQ] = useState('');
   const qd = useDebounced(q, 250);
+  const [agentFilter, setAgentFilter] = useState<string>('');
 
   // pagination state
   const [page, setPage] = useState(1);
@@ -194,10 +332,37 @@ const [refreshKey, setRefreshKey] = useState(0);
   // agents (dropdown için) — HOOK içerde!
   const [agents, setAgents] = useState<AgentLite[]>([]);
 
+  // determine if current user is special agent (1 or 1009) by looking up from agents list
+  const currentAgent = agents.find((a) => a.id === user?.id);
+  const effectiveIsSuperAgent = isSupervisor || !!(currentAgent && ['1', '1009'].includes(String(currentAgent.externalUserId)));
+
   // modal state
   const [resolveOpen, setResolveOpen] = useState(false);
   const [resolveId, setResolveId] = useState<string | undefined>();
   const [resolveText, setResolveText] = useState('');
+  const [unreachableOpen, setUnreachableOpen] = useState(false);
+  const [unreachableId, setUnreachableId] = useState<string | undefined>();
+  const [unreachableText, setUnreachableText] = useState('Ulaşılamadı wp üzerinden iletişime geçildi');
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportId, setReportId] = useState<string | undefined>();
+  const [reportText, setReportText] = useState('');
+  const [scheduleDate, setScheduleDate] = useState(new Date().toISOString().split('T')[0]);
+  const [scheduleTime, setScheduleTime] = useState('09:00');
+
+  // collapsible sidebar sections
+  const [openDurum, setOpenDurum] = useState(true);
+  const [openAgent, setOpenAgent] = useState(true);
+  const [openKapsam, setOpenKapsam] = useState(true);
+  const [openAra, setOpenAra] = useState(true);
+
+  // Append agent signature to outgoing messages (not visible in textarea)
+  function appendAgentSignature(raw: string) {
+    const name = user?.name || 'Agent';
+    const sig = ` -${name}`;
+    if (!raw) return sig.trimStart();
+    if (raw.trim().endsWith(sig)) return raw;
+    return `${raw}\n${sig}`;
+  }
 
   // ajanları bir kere çek
   useEffect(() => {
@@ -211,7 +376,12 @@ function refresh() {
   // listeyi çek
   useEffect(() => {
     const params = new URLSearchParams();
-    params.set('assignedTo', scopeMine ? 'me' : 'all');
+    // If user selected the 'reported' filter, always show reported items from everyone
+    if (status === 'reported') {
+      params.set('assignedTo', 'all');
+    } else {
+      params.set('assignedTo', scopeMine ? 'me' : 'all');
+    }
     if (status !== 'all') params.set('status', status);
     if (qd.trim()) params.set('q', qd.trim());
     params.set('page', String(page));
@@ -235,8 +405,163 @@ function refresh() {
 
   // actions
   async function unreachable(id: string) {
-    await api(`/tickets/${id}/unreachable`, { method: 'POST' });
-    setPage((p) => p);
+    setUnreachableId(id);
+    setUnreachableOpen(true);
+  }
+
+  async function submitUnreachable() {
+    if (!unreachableId) return;
+    const raw = unreachableText.trim();
+    if (!raw) return;
+
+    let scheduleDateTime = null;
+    if (scheduleDate && scheduleTime) {
+      scheduleDateTime = new Date(`${scheduleDate}T${scheduleTime}`).toISOString();
+    }
+
+    const finalMsg = appendAgentSignature(raw);
+
+    await api(`/tickets/${unreachableId}/unreachable`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        resolutionText: finalMsg,
+        scheduleDateTime: scheduleDateTime
+      }),
+    });
+
+    setUnreachableOpen(false);
+    setUnreachableId(undefined);
+    setUnreachableText('Ulaşılamadı wp üzerinden iletişime geçildi');
+    setScheduleDate('');
+    setScheduleTime('');
+    refresh();
+  }
+
+  function openReportModal(id: string) {
+    setReportId(id);
+    setReportText('Konu yazılım birimine iletilmiştir.');
+    setReportOpen(true);
+  }
+
+  async function submitReport() {
+    console.log('submitReport called', { reportId, reportText });
+    if (!reportId) {
+      alert('Gönderecek kayıt seçili değil. Lütfen yeniden deneyin.');
+      return;
+    }
+    const raw = reportText.trim();
+    if (!raw) {
+      alert('Lütfen iletilecek metni girin.');
+      return;
+    }
+
+    const finalMsg = appendAgentSignature(raw);
+    try {
+      const res = await api(`/tickets/${reportId}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resolutionText: finalMsg }),
+      });
+      console.log('report POST response', res);
+    } catch (e) {
+      console.warn('POST /report failed, trying fallback PUT', e);
+      // best-effort: if backend doesn't support /report, try a generic update
+      try {
+        const res2 = await api(`/tickets/${reportId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'reported', resolutionText: finalMsg }),
+        });
+        console.log('fallback PUT response', res2);
+      } catch (er) {
+        console.error('Report failed', er);
+        // fallback PUT already attempted below; do not notify group or show alert per UX request
+      }
+    }
+
+    setReportOpen(false);
+    setReportId(undefined);
+    setReportText('');
+    refresh();
+  }
+
+  // Notify-sender (private DM) modal
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [notifyId, setNotifyId] = useState<string | undefined>();
+  const [notifyText, setNotifyText] = useState('Mesajınız hatalı, iletişim alanı zorunludur.');
+
+  // Toasts
+  const [toasts, setToasts] = useState<Array<{ id: number; text: string; type?: 'success' | 'error' | 'info' }>>([]);
+  function showToast(text: string, type: 'success' | 'error' | 'info' = 'info') {
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    setToasts((t) => [...t, { id, text, type }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
+  }
+
+  function openNotifyModal(id: string) {
+    setNotifyId(id);
+    setNotifyText('Mesajınız hatalı, iletişim alanı zorunludur.');
+    setNotifyOpen(true);
+  }
+
+  // Analysis modal after resolving a ticket
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [analysisTicketId, setAnalysisTicketId] = useState<string | undefined>();
+  const [analysisDifficulty, setAnalysisDifficulty] = useState<'easy'|'medium'|'hard'|''>('');
+  const [analysisNote, setAnalysisNote] = useState('');
+
+  function openAnalysisModalFor(id: string) {
+    setAnalysisTicketId(id);
+    setAnalysisDifficulty('');
+    setAnalysisNote('');
+    setAnalysisOpen(true);
+  }
+
+  async function submitAnalysis() {
+    if (!analysisTicketId) return;
+    try {
+      await api(`/tickets/${analysisTicketId}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ difficulty: analysisDifficulty || undefined, note: analysisNote }),
+      });
+      setAnalysisOpen(false);
+      setAnalysisTicketId(undefined);
+      setAnalysisDifficulty('');
+      setAnalysisNote('');
+      showToast('Analiz kaydedildi', 'success');
+      refresh();
+    } catch (e) {
+      console.error('analyze failed', e);
+      showToast('Analiz kaydedilemedi', 'error');
+    }
+  }
+
+  async function submitNotify() {
+    if (!notifyId) return;
+    const raw = notifyText.trim();
+    if (!raw) {
+      alert('Lütfen mesaj girin.');
+      return;
+    }
+
+    try {
+      await api(`/tickets/${notifyId}/notify-sender`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: raw }),
+      });
+      showToast('Cevap gönderildi', 'success');
+      setNotifyOpen(false);
+      setNotifyId(undefined);
+      setNotifyText('');
+      refresh();
+    } catch (e) {
+      console.error('notify-sender failed', e);
+      showToast('Gönderilemedi', 'error');
+      // keep modal open so agent can retry or edit
+    }
   }
 
   async function deleteTicket(id: string) {
@@ -260,7 +585,7 @@ function refresh() {
     const raw = (t.telegram?.text || '').replace(/\r/g, '').trim();
     const detail = getField(raw, 'Detay');
     const topic = detail || '...';
-    const defaultText = `Kullanıcıya ${topic} hakkında destek verildi. \n -${agentName}`;
+    const defaultText = `Kullanıcıya ${topic} hakkında destek verildi.`;
     setResolveId(t.id);
     setResolveText(defaultText);
     setResolveOpen(true);
@@ -273,15 +598,19 @@ function refresh() {
     const payload = (onlyDetail || raw).trim();
     if (!payload) return;
 
+    const finalMsg = appendAgentSignature(payload);
+
     await api(`/tickets/${resolveId}/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resolutionText: payload }),
+      body: JSON.stringify({ resolutionText: finalMsg }),
     });
 
     setResolveOpen(false);
-    setResolveId(undefined);
     setResolveText('');
+    // after resolving, open analysis modal so agent can rate difficulty / add note
+    openAnalysisModalFor(resolveId);
+    setResolveId(undefined);
     setPage((p) => p); // refresh
     refresh();
   }
@@ -302,80 +631,131 @@ function refresh() {
 
   const pages = Math.max(1, Math.ceil(total / 10));
   const deletePermission = isSupervisor;
+  // build client-side visible list as a safety-net in case backend doesn't fully filter
+  let visibleItems = items.slice();
+  // apply status filter client-side (ensures 'reported' shows only reported tickets)
+  if (status !== 'all') {
+    visibleItems = visibleItems.filter((it) => String(it.status) === String(status));
+  }
+  // apply agent filter client-side for supervisors
+  const filteredItems = agentFilter
+    ? visibleItems.filter((it) => {
+        const aid = typeof it.assignedTo === 'string' ? it.assignedTo : (it.assignedTo as any)?.id;
+        return String(aid) === String(agentFilter);
+      })
+    : visibleItems;
 
   return (
     <>
       <Header />
+      {/* Toast container */}
+      <div className="toast-container" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast toast-${t.type || 'info'}`}>
+            {t.text}
+          </div>
+        ))}
+      </div>
       <div className="container">
         <h3 className="section-title">Görevler</h3>
 
-        {/* Toolbar */}
-        <div className="toolbar">
-          <div className="chips">
-            {(['all', 'open', 'resolved', 'unreachable'] as Status[]).map((s) => (
-              <button
-                key={s}
-                onClick={() => {
-                  setStatus(s);
-                  setPage(1);
-                }}
-                className={`chip ${status === s ? 'active' : ''}`}
-              >
-                {s === 'all' ? 'Tümü' : s === 'open' ? 'Açık' : s === 'resolved' ? 'Çözümlendi' : 'Ulaşılamadı'}
-              </button>
-            ))}
-          </div>
+        <div className="layout">
+          <aside className="sidebar">
+            <div style={{ marginBottom: 12, fontWeight: 800 }}>Filtreler</div>
+            <div className={`filter-section ${openAra ? 'open' : ''}`}>
+              <div className="filter-header" onClick={() => setOpenAra((v) => !v)} role="button" tabIndex={0}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Ara</div>
+                <div className={`chev ${openAra ? 'open' : ''}`} />
+              </div>
+              <div className="filter-content" style={{ display: openAra ? 'block' : 'none' }}>
+                <input className="input" placeholder="Ara isim, mesaj, agent" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+              </div>
+            </div>
+            <div className={`filter-section ${openDurum ? 'open' : ''}`}>
+              <div className="filter-header" onClick={() => setOpenDurum((v) => !v)} role="button" tabIndex={0}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Durum</div>
+                <div className={`chev ${openDurum ? 'open' : ''}`} />
+              </div>
+              <div className="filter-content" style={{ display: openDurum ? 'block' : 'none' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {(['all', 'open', 'resolved', 'unreachable', 'reported'] as Status[]).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => {
+                        setStatus(s);
+                        setPage(1);
+                      }}
+                      className={`chip ${status === s ? 'active' : ''} ${s === 'reported' ? 'chip--reported' : ''}`}
+                      style={{ width: '100%', justifyContent: 'flex-start' }}
+                    >
+                      {s === 'all'
+                        ? 'Tümü'
+                        : s === 'open'
+                        ? 'Açık'
+                        : s === 'resolved'
+                        ? 'Çözümlendi'
+                        : s === 'reported'
+                        ? 'Yazılıma İletildi'
+                        : 'Ulaşılamadı'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
-          <div className="toggle" title="Kapsam">
-            <button
-              className={scopeMine ? 'active' : ''}
-              onClick={() => {
-                setScopeMine(true);
-                setPage(1);
-              }}
-            >
-              Benim
-            </button>
-            <button
-              className={!scopeMine ? 'active' : ''}
-              onClick={() => {
-                setScopeMine(false);
-                setPage(1);
-              }}
-              disabled={!isSupervisor}
-            >
-              Tümü
-            </button>
-          </div>
+            <div className={`filter-section ${openAgent ? 'open' : ''}`}>
+              <div className="filter-header" onClick={() => setOpenAgent((v) => !v)} role="button" tabIndex={0}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Agent</div>
+                <div className={`chev ${openAgent ? 'open' : ''}`} />
+              </div>
+              <div className="filter-content" style={{ display: openAgent ? 'block' : 'none' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <button className={`chip ${!agentFilter ? 'active' : ''}`} onClick={() => setAgentFilter('')}>Tümü</button>
+                  {agents.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => setAgentFilter(a.id)}
+                      className={`chip ${String(agentFilter) === String(a.id) ? 'active' : ''}`}
+                      style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="avatar-sm">{a.name?.[0]}</div>
+                        <div style={{ fontWeight: 700 }}>{a.name}</div>
+                      </div>
+                      <div className="inline-muted">{a.externalUserId}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
-          <select
-            className="select"
-            value={sort}
-            onChange={(e) => {
-              setSort(e.target.value as Sort);
-              setPage(1);
-            }}
-          >
-            <option value="newest">Sırala: Yeni → Eski</option>
-            <option value="oldest">Sırala: Eski → Yeni</option>
-          </select>
+            <div className={`filter-section ${openKapsam ? 'open' : ''}`}>
+              <div className="filter-header" onClick={() => setOpenKapsam((v) => !v)} role="button" tabIndex={0}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Kapsam</div>
+                <div className={`chev ${openKapsam ? 'open' : ''}`} />
+              </div>
+              <div className="filter-content" style={{ display: openKapsam ? 'block' : 'none' }}>
+                <div className="toggle" style={{ width: '100%' }}>
+                  <button className={`seg-btn ${scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(true); setPage(1); }}>Benim</button>
+                  <button className={`seg-btn ${!scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(false); setPage(1); }} disabled={!isSupervisor}>Tümü</button>
+                </div>
+              </div>
+            </div>
 
-          <input
-            className="input"
-            placeholder="Ara isim, mesaj, agent"
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setPage(1);
-            }}
-          />
-          <div className="spacer" />
-          <div className="inline-muted">
-            {items.length} / {total}
-          </div>
-        </div>
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="inline-muted">{items.length} / {total}</div>
+                <select className="select" value={sort} onChange={(e) => { setSort(e.target.value as Sort); setPage(1); }}>
+                  <option value="newest">Yeni → Eski</option>
+                  <option value="oldest">Eski → Yeni</option>
+                </select>
+              </div>
+            </div>
+          </aside>
 
-        {/* Sonuçlar */}
+          <main className="main">
+
+        {/* Sonuçlar (list view only) */}
         {loading ? (
           <>
             {[0, 1, 2].map((i) => (
@@ -389,20 +769,24 @@ function refresh() {
               </div>
             ))}
           </>
-        ) : items.length ? (
-          items.map((it) => (
-            <TicketCard
-              key={it.id}
-              it={it}
-              query={qd}
-              onResolve={openResolveModal}
-              onUnreachable={unreachable}
-              onDelete={deleteTicket}
-              canDelete={deletePermission}
-              canReassign={canReassign}
-              agents={agents}
-              onReassign={onReassign}
-            />
+        ) : filteredItems.length ? (
+          filteredItems.map((it) => (
+            <div key={it.id} style={{ marginBottom: 14 }}>
+              <TicketCard
+                it={it}
+                query={qd}
+                onResolve={openResolveModal}
+                onUnreachable={unreachable}
+                onDelete={deleteTicket}
+                canDelete={deletePermission}
+                agents={agents}
+                onReassign={onReassign}
+                onReport={openReportModal}
+                onNotify={openNotifyModal}
+                currentUserId={user?.id || ''}
+                isSuperAgent={effectiveIsSuperAgent}
+              />
+            </div>
           ))
         ) : (
           <div className="card" style={{ textAlign: 'center', color: 'var(--muted)' }}>
@@ -412,6 +796,8 @@ function refresh() {
 
         {/* Sayfalama */}
         {!loading && total > 0 && <Pagination page={page} pages={pages} onPage={setPage} />}
+          </main>
+        </div>
       </div>
 
       {/* Çözümlendi Modal */}
@@ -427,6 +813,176 @@ function refresh() {
           </button>
         </div>
       </Modal>
+      <Modal open={unreachableOpen} title="Ulaşılamadı" onClose={() => setUnreachableOpen(false)}>
+        <div style={{ 
+          backgroundColor: 'var(--background-light)',
+          padding: '1.5rem',
+          borderRadius: '8px',
+          marginBottom: '1.5rem'
+        }}>
+          <div className="muted" style={{ marginBottom: '1rem' }}>Gruba Gönderilecek Mesaj</div>
+          <textarea 
+            value={unreachableText} 
+            onChange={(e) => setUnreachableText(e.target.value)}
+            style={{
+              width: '100%',
+              minHeight: '80px',
+              padding: '0.75rem',
+              borderRadius: '6px',
+              border: '1px solid var(--border-color)',
+              backgroundColor: 'var(--background)',
+              resize: 'vertical'
+            }}
+          />
+        </div>
+
+        <div style={{ 
+          backgroundColor: 'var(--background-light)',
+          padding: '1.5rem',
+          borderRadius: '8px'
+        }}>
+          <div style={{ marginBottom: '1rem' }}>
+            <div className="muted" style={{ marginBottom: '0.5rem' }}>
+              Bot'un Size Mesaj Göndereceği Zaman
+            </div>
+            <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+              Seçtiğiniz saatte bot size hatırlatma mesajı gönderecektir
+            </div>
+          </div>
+
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: '1fr 1fr', 
+            gap: '1rem',
+            marginBottom: '0.5rem'
+          }}>
+            <div>
+              <label style={{ 
+                display: 'block', 
+                marginBottom: '0.5rem',
+                fontSize: '0.9rem',
+                color: 'var(--text-secondary)'
+              }}>
+                Tarih
+              </label>
+              <input
+                type="date"
+                value={scheduleDate}
+                onChange={(e) => setScheduleDate(e.target.value)}
+                min={new Date().toISOString().split('T')[0]}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  backgroundColor: 'var(--background)'
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ 
+                display: 'block', 
+                marginBottom: '0.5rem',
+                fontSize: '0.9rem',
+                color: 'var(--text-secondary)'
+              }}>
+                Saat
+              </label>
+              <input
+                type="time"
+                value={scheduleTime}
+                onChange={(e) => setScheduleTime(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-color)',
+                  backgroundColor: 'var(--background)'
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'flex-end', 
+          gap: '1rem', 
+          marginTop: '1.5rem'
+        }}>
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => setUnreachableOpen(false)}
+            style={{
+              padding: '0.75rem 1.5rem',
+              borderRadius: '6px'
+            }}
+          >
+            İptal
+          </button>
+          <button 
+            className="btn btn-success" 
+            onClick={submitUnreachable}
+            style={{
+              padding: '0.75rem 1.5rem',
+              borderRadius: '6px'
+            }}
+          >
+            Kaydet ve Gönder
+          </button>
+        </div>
+      </Modal>
+      {/* Yazılıma İlet Modal */}
+      <Modal open={reportOpen} title="Yazılıma İlet" onClose={() => setReportOpen(false)}>
+        <div className="muted">Konu hakkında yazılıma iletilecek mesajı girin.</div>
+        <textarea value={reportText} onChange={(e) => setReportText(e.target.value)} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
+          <button className="btn btn-secondary" onClick={() => setReportOpen(false)}>
+            İptal
+          </button>
+          <button className="btn btn-success" onClick={submitReport}>
+            Gönder
+          </button>
+        </div>
+      </Modal>
+      {/* Kullanıcıyı Uyar Modal */}
+      <Modal open={notifyOpen} title="Kullanıcıyı Uyar" onClose={() => setNotifyOpen(false)}>
+        <div className="muted">Kullanıcıya gönderilecek özel mesajı düzenleyin.</div>
+        <textarea value={notifyText} onChange={(e) => setNotifyText(e.target.value)} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
+          <button className="btn btn-secondary" onClick={() => setNotifyOpen(false)}>
+            İptal
+          </button>
+          <button className="btn btn-success" onClick={submitNotify}>
+            Gönder
+          </button>
+        </div>
+      </Modal>
+
+      {/* Analiz Modal (çözümlendikten sonra açılır) */}
+      {analysisOpen && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <h4>Analiz - Talep Zorluğu ve Not</h4>
+            <div style={{ marginBottom: 8 }}>
+              <label className="inline-muted">Zorluk</label>
+              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                <button className={`chip ${analysisDifficulty === 'easy' ? 'active' : ''}`} onClick={() => setAnalysisDifficulty('easy')}>Kolay</button>
+                <button className={`chip ${analysisDifficulty === 'medium' ? 'active' : ''}`} onClick={() => setAnalysisDifficulty('medium')}>Orta</button>
+                <button className={`chip ${analysisDifficulty === 'hard' ? 'active' : ''}`} onClick={() => setAnalysisDifficulty('hard')}>Zor</button>
+              </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label className="inline-muted">Not</label>
+              <textarea value={analysisNote} onChange={(e) => setAnalysisNote(e.target.value)} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setAnalysisOpen(false)}>Atla</button>
+              <button className="btn btn-success" onClick={submitAnalysis}>Kaydet</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
