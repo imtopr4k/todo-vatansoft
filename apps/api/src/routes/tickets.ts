@@ -32,7 +32,7 @@ r.get('/', async (req, res) => {
     limit = Number.isFinite(+limit) && +limit > 0 ? Math.min(100, Math.floor(+limit)) : 10;
     sort = sort === 'oldest' ? 'oldest' : 'newest';
 
-    if (status && !['open', 'resolved', 'unreachable'].includes(String(status))) {
+    if (status && !['open', 'resolved', 'unreachable', 'reported'].includes(String(status))) {
       return res.status(400).json({ message: 'Invalid status' });
     }
 
@@ -122,6 +122,137 @@ r.post('/:id/resolve', async (req, res) => {
   }
 });
 
+// POST /tickets/:id/report
+// Mark ticket as reported (Yazılıma iletildi). Does not send group notification by default.
+r.post('/:id/report', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { resolutionText } = req.body as { resolutionText?: any };
+    const auth = (req as any).auth;
+
+    const t = await Ticket.findById(id);
+    if (!t) return res.status(404).json({ message: 'Not found' });
+    if (auth.role !== 'supervisor' && String(t.assignedTo) !== auth.sub) {
+      return res.status(403).json({ message: 'Not your ticket' });
+    }
+
+    const msg = String((resolutionText ?? '')).trim();
+    t.status = 'reported';
+    t.resolutionText = msg;
+    await t.save();
+
+    // Send a group reply to the original telegram message to notify that it was reported
+    try {
+      if (t.telegram?.chatId && t.telegram?.messageId) {
+        await sendReply(t.telegram.chatId, t.telegram.messageId, msg || 'Konu yazılıma iletilmiştir');
+      }
+    } catch (e) {
+      console.error('[tickets:report] group send failed', e);
+      // don't fail the request because the main goal (mark as reported) succeeded
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[POST /tickets/:id/report]', e);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
+// GET /tickets/stats/senders
+// Return counts grouped by telegram sender (displayName / username / id)
+r.get('/stats/senders', async (req, res) => {
+  try {
+    // We will aggregate in JS to be tolerant to missing fields and keep logic simple
+    const list = await Ticket.find({}).select('telegram.from').lean();
+
+    const map = new Map<string, { name: string; id?: number | string; count: number }>();
+
+    for (const t of list) {
+      const from = (t as any).telegram?.from || {};
+      const id = from.id ?? from.telegramUserId ?? null;
+      const name = from.displayName || [from.firstName, from.lastName].filter(Boolean).join(' ').trim() || from.username || (id ? String(id) : 'Bilinmiyor');
+      const key = id ? `id:${id}` : `name:${name}`;
+      const prev = map.get(key);
+      if (prev) prev.count += 1;
+      else map.set(key, { name, id: id ?? undefined, count: 1 });
+    }
+
+    const out = Array.from(map.values()).sort((a, b) => b.count - a.count);
+
+    return res.json(out);
+  } catch (e) {
+    console.error('[GET /tickets/stats/senders]', e);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
+// GET /tickets/stats/agents
+// Return counts grouped by assigned agent: total, resolved, unreachable, open, reported
+r.get('/stats/agents', async (req, res) => {
+  try {
+    const list = await Ticket.find({}).select('assignedTo status').populate('assignedTo', 'name externalUserId').lean();
+
+    const map = new Map<string, { id: string; name: string; externalUserId?: string; total: number; open: number; resolved: number; unreachable: number; reported: number }>();
+
+    for (const t of list) {
+      const aid = t.assignedTo && typeof t.assignedTo === 'object' ? String((t.assignedTo as any)._id) : String(t.assignedTo || 'unassigned');
+      const name = t.assignedTo && typeof t.assignedTo === 'object' ? (t.assignedTo as any).name : 'Atanmamış';
+      const ext = t.assignedTo && typeof t.assignedTo === 'object' ? String((t.assignedTo as any).externalUserId) : undefined;
+      const prev = map.get(aid);
+      if (!prev) {
+        map.set(aid, { id: aid, name, externalUserId: ext, total: 0, open: 0, resolved: 0, unreachable: 0, reported: 0 });
+      }
+      const cur = map.get(aid)!;
+      cur.total += 1;
+      const s = String(t.status || 'open');
+      if (s === 'open') cur.open += 1;
+      else if (s === 'resolved') cur.resolved += 1;
+      else if (s === 'unreachable') cur.unreachable += 1;
+      else if (s === 'reported') cur.reported += 1;
+    }
+
+    const out = Array.from(map.values()).sort((a, b) => b.total - a.total);
+    return res.json(out);
+  } catch (e) {
+    console.error('[GET /tickets/stats/agents]', e);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
+// PUT /tickets/:id
+// Generic update endpoint used as a fallback by the UI to set status/resolutionText
+r.put('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, resolutionText } = req.body as { status?: string; resolutionText?: any };
+    const auth = (req as any).auth;
+
+    const t = await Ticket.findById(id);
+    if (!t) return res.status(404).json({ message: 'Not found' });
+    if (auth.role !== 'supervisor' && String(t.assignedTo) !== auth.sub) {
+      return res.status(403).json({ message: 'Not your ticket' });
+    }
+
+    // Only allow updating a restricted set of fields
+    if (typeof status !== 'undefined') {
+      if (!['open', 'resolved', 'unreachable', 'reported'].includes(String(status))) {
+        return res.status(400).json({ message: 'Invalid status' });
+      }
+      t.status = String(status) as any;
+    }
+
+    if (typeof resolutionText !== 'undefined') {
+      t.resolutionText = String(resolutionText ?? '');
+    }
+
+    await t.save();
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[PUT /tickets/:id]', e);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
 r.post('/:id/unreachable', async (req, res) => {
   try {
     const { id } = req.params;
@@ -182,6 +313,73 @@ r.post('/:id/unreachable', async (req, res) => {
   } catch (e) {
     console.error('[POST /tickets/:id/unreachable]', e);
     res.status(500).json({ message: 'Internal error' });
+  }
+});
+
+// POST /tickets/:id/analyze
+// Save difficulty + optional note for a ticket (agent analysis)
+r.post('/:id/analyze', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { difficulty, note } = req.body as { difficulty?: string; note?: string };
+    const auth = (req as any).auth;
+
+    const t = await Ticket.findById(id);
+    if (!t) return res.status(404).json({ message: 'Not found' });
+    if (auth.role !== 'supervisor' && String(t.assignedTo) !== auth.sub) {
+      return res.status(403).json({ message: 'Not your ticket' });
+    }
+
+    const entry: any = { at: new Date(), byAgentId: auth.sub };
+    if (difficulty && ['easy', 'medium', 'hard'].includes(String(difficulty))) entry.difficulty = String(difficulty);
+    if (typeof note !== 'undefined') entry.note = String(note || '');
+
+    t.analysis = t.analysis || [];
+    t.analysis.push(entry);
+    await t.save();
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[POST /tickets/:id/analyze]', e);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
+// GET /tickets/analysis
+// Query tickets within a date range and optionally by agent; returns ticket list with analysis
+r.get('/analysis', async (req, res) => {
+  try {
+    const { from, to, agentId } = req.query as any;
+    const q: any = {};
+    if (from) {
+      const d = new Date(from);
+      if (!isNaN(d.getTime())) q.createdAt = { ...(q.createdAt || {}), $gte: d };
+    }
+    if (to) {
+      const d = new Date(to);
+      if (!isNaN(d.getTime())) q.createdAt = { ...(q.createdAt || {}), $lte: d };
+    }
+    if (agentId) q.assignedTo = agentId;
+
+    const list = await Ticket.find(q)
+      .select('telegram assignedTo status createdAt analysis resolutionText')
+      .populate('assignedTo', 'name externalUserId')
+      .lean();
+
+    const out = list.map((t: any) => ({
+      id: String(t._id),
+      createdAt: t.createdAt,
+      status: t.status,
+      telegram: t.telegram,
+      assignedTo: t.assignedTo && typeof t.assignedTo === 'object' ? { id: String(t.assignedTo._id), name: t.assignedTo.name, externalUserId: String(t.assignedTo.externalUserId) } : t.assignedTo,
+      analysis: t.analysis || [],
+      resolutionText: t.resolutionText
+    }));
+
+    return res.json(out);
+  } catch (e) {
+    console.error('[GET /tickets/analysis]', e);
+    return res.status(500).json({ message: 'Internal error' });
   }
 });
 
@@ -297,4 +495,73 @@ r.put('/:id/assign', async (req, res) => {
   }
 });
 
+// POST /tickets/:id/notify
+// Send a plain reply message to the ticket chat without changing ticket state.
+r.post('/:id/notify', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { message } = req.body as { message?: string };
+    const auth = (req as any).auth;
+
+    const t = await Ticket.findById(id);
+    if (!t) return res.status(404).json({ message: 'Not found' });
+    if (auth.role !== 'supervisor' && String(t.assignedTo) !== auth.sub) {
+      return res.status(403).json({ message: 'Not your ticket' });
+    }
+
+    const msg = String((message ?? '')).trim() || 'Konu yazılıma iletilmiştir';
+
+    try {
+      if (t.telegram?.chatId && t.telegram?.messageId) {
+        await sendReply(t.telegram.chatId, t.telegram.messageId, msg);
+      }
+    } catch (e) {
+      console.error('[tickets:notify] send failed', e);
+      return res.status(500).json({ message: 'Send failed' });
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[POST /tickets/:id/notify]', e);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
+// POST /tickets/:id/notify-sender
+// Send a private DM to the original telegram sender (do NOT reply in group)
+r.post('/:id/notify-sender', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { message } = req.body as { message?: string };
+    const auth = (req as any).auth;
+
+    const t = await Ticket.findById(id);
+    if (!t) return res.status(404).json({ message: 'Not found' });
+    if (auth.role !== 'supervisor' && String(t.assignedTo) !== auth.sub) {
+      return res.status(403).json({ message: 'Not your ticket' });
+    }
+
+    const from = (t as any).telegram?.from || {};
+    const userId = from.id || from.telegramUserId || null;
+    if (!userId) return res.status(400).json({ message: 'No sender id available' });
+
+    const baseMsg = String((message ?? '').trim()) || 'Mesajınız hatalı, iletişim alanı zorunludur.';
+    const original = (t as any).telegram?.text || '(orijinal mesaj yok)';
+    const text = `${baseMsg}\n\nOrijinal mesaj:\n${original}`;
+
+    try {
+      await sendDM(Number(userId), text);
+    } catch (e) {
+      console.error('[tickets:notify-sender] sendDM failed', e);
+      return res.status(500).json({ message: 'Send failed' });
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[POST /tickets/:id/notify-sender]', e);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
 export default r;
+

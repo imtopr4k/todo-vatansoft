@@ -2,7 +2,7 @@ export type Role = 'agent' | 'supervisor';
 export interface Me { id: string; name: string; role: Role; }
 export interface Ticket {
     id: string;
-    status: 'open' | 'resolved' | 'unreachable';
+    status: 'open' | 'resolved' | 'unreachable' | 'reported';
     telegram: {
         chatId: number;
         messageId: number;

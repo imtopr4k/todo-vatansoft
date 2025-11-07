@@ -1,6 +1,7 @@
 import { me, logout } from '../auth';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
+import { Link } from 'react-router-dom';
 // const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME;
 const BOT_USERNAME = 'VatansoftTeknikBot';
 
@@ -54,7 +55,14 @@ export default function Header() {
   return (
     <header className="header">
       <div className="header-left">
-        <div className="brand">TELEGRAMTODO</div>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div className="brand">TELEGRAMTODO</div>
+          <nav style={{ display: 'flex', gap: 8 }}>
+            <Link to="/tickets" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Görevler</Link>
+            <Link to="/stats" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>İstatistik</Link>
+            <Link to="/analysis" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Analiz</Link>
+          </nav>
+        </div>
       </div>
 
       <div className="header-actions">

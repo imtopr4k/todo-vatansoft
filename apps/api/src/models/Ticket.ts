@@ -16,11 +16,18 @@ const TicketSchema = new Schema({
       displayName: { type: String }                                // first + last fallback
     }
   },
-  status: { type: String, enum: ['open', 'resolved', 'unreachable'], default: 'open' },
+  status: { type: String, enum: ['open', 'resolved', 'unreachable', 'reported'], default: 'open' },
   assignedTo: { type: Types.ObjectId, ref: 'Agent', required: true },
   assignedAt: { type: Date, default: Date.now },
   resolutionText: { type: String },
   scheduledDMAt: { type: Date },
+  // Analysis data: agents can record difficulty and notes for the ticket
+  analysis: [{
+    difficulty: { type: String, enum: ['easy', 'medium', 'hard'] },
+    note: { type: String },
+    byAgentId: { type: Types.ObjectId, ref: 'Agent' },
+    at: { type: Date, default: Date.now }
+  }],
   history: [{
     at: { type: Date, default: Date.now },
     byAgentId: { type: Types.ObjectId, ref: 'Agent' },

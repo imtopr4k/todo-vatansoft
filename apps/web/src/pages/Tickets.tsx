@@ -6,14 +6,22 @@ import { me } from '../auth';
 import Header from '../Components/Header';
 import { Modal } from '../Components/Modal';
 
-type Status = 'all' | 'open' | 'resolved' | 'unreachable';
+type Status = 'all' | 'open' | 'resolved' | 'unreachable' | 'reported';
 type Sort = 'newest' | 'oldest';
 type AgentLite = { id: string; name: string; externalUserId: string; isActive: boolean };
 
 function StatusBadge({ status }: { status: Ticket['status'] }) {
   return (
     <span className={`badge ${status}`}>
-      {status === 'open' ? 'Açık' : status === 'resolved' ? 'Çözümlendi' : 'Ulaşılamadı'}
+      {status === 'open'
+        ? 'Açık'
+        : status === 'resolved'
+        ? 'Çözümlendi'
+        : status === 'unreachable'
+        ? 'Ulaşılamadı'
+        : status === 'reported'
+        ? 'Yazılıma İletildi'
+        : ''}
     </span>
   );
 }
@@ -98,10 +106,31 @@ function TicketAgentDropdown({
     const trg = triggerRef.current;
     if (trg) {
       const r = trg.getBoundingClientRect();
-      setAnchor({ top: r.bottom + window.scrollY + 6, left: r.left + window.scrollX, width: Math.max(220, r.width) });
+      // Use viewport coordinates because the menu is positioned fixed
+      setAnchor({ top: r.bottom + 6, left: r.left, width: Math.max(220, r.width) });
     }
     setOpen((s) => !s);
   }
+
+  // keep anchor updated while open so the fixed-position menu stays aligned with the trigger
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = () => {
+      const trg = triggerRef.current;
+      if (!trg) return;
+      const r = trg.getBoundingClientRect();
+      setAnchor({ top: r.bottom + 6, left: r.left, width: Math.max(220, r.width) });
+    };
+    const onResize = onScroll;
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+    // initial align
+    onScroll();
+    return () => {
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [open]);
 
   return (
     <>
@@ -152,6 +181,8 @@ function TicketCard({
   canDelete,
   agents,
   onReassign,
+  onReport,
+  onNotify,
   currentUserId,
   isSuperAgent,
 }: {
@@ -163,6 +194,8 @@ function TicketCard({
   canDelete: boolean;
   agents: AgentLite[];
   onReassign: (ticketId: string, toAgentId: string) => void;
+  onReport: (ticketId: string) => void;
+  onNotify: (ticketId: string) => void;
   currentUserId: string;
   isSuperAgent: boolean;
 }) {
@@ -176,7 +209,6 @@ function TicketCard({
   const assignedAgent = agents.find(
     (a) => String(a.id) === String(assignedToId) || String(a.externalUserId) === String(assignedToId)
   );
-  const agentActive = !!assignedAgent?.isActive;
 
   const canReassign = isSuperAgent || (assignedToId && currentUserId && String(assignedToId) === String(currentUserId));
 
@@ -192,8 +224,9 @@ function TicketCard({
       <div className={`card ticket-grid status-${it.status}`}>
           <div className="avatar-col">
           <div
-            className={`status-dot ${agentActive ? 'filled' : ''} status-${it.status}`}
-            title={assignedAgent ? `${assignedAgent.name} — ${agentActive ? 'Aktif' : 'Pasif'}` : it.telegram?.from?.username || ''}
+            // status-dot now reflects the ticket status (not agent activity)
+            className={`status-dot filled status-${it.status}`}
+            title={assignedAgent ? `${assignedAgent.name}` : it.telegram?.from?.username || ''}
           />
         </div>
 
@@ -259,6 +292,13 @@ function TicketCard({
           <button onClick={() => onUnreachable(it.id)} disabled={it.status !== 'open'} className="btn danger">
             🚫 Ulaşılamadı
           </button>
+          {/* Yazılıma ilet butonu */}
+          <button onClick={() => onReport(it.id)} className="btn" disabled={it.status === 'reported'} style={{background:'linear-gradient(90deg,#7c3aed22,#2563eb11)'}}>
+            🛠️ Yazılıma İlet
+          </button>
+          <button onClick={() => onNotify(it.id)} className="btn" style={{background:'linear-gradient(90deg,#f9731677,#f43f5e33)'}}>
+            ⚠️ Kullanıcıyı Uyar
+          </button>
           {canDelete && (
             <button onClick={() => onDelete(it.id)} className="btn ghost" title="Bu görevi sil">
               🗑️ Sil
@@ -303,8 +343,26 @@ export default function Tickets() {
   const [unreachableOpen, setUnreachableOpen] = useState(false);
   const [unreachableId, setUnreachableId] = useState<string | undefined>();
   const [unreachableText, setUnreachableText] = useState('Ulaşılamadı wp üzerinden iletişime geçildi');
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportId, setReportId] = useState<string | undefined>();
+  const [reportText, setReportText] = useState('');
   const [scheduleDate, setScheduleDate] = useState(new Date().toISOString().split('T')[0]);
   const [scheduleTime, setScheduleTime] = useState('09:00');
+
+  // collapsible sidebar sections
+  const [openDurum, setOpenDurum] = useState(true);
+  const [openAgent, setOpenAgent] = useState(true);
+  const [openKapsam, setOpenKapsam] = useState(true);
+  const [openAra, setOpenAra] = useState(true);
+
+  // Append agent signature to outgoing messages (not visible in textarea)
+  function appendAgentSignature(raw: string) {
+    const name = user?.name || 'Agent';
+    const sig = ` -${name}`;
+    if (!raw) return sig.trimStart();
+    if (raw.trim().endsWith(sig)) return raw;
+    return `${raw}\n${sig}`;
+  }
 
   // ajanları bir kere çek
   useEffect(() => {
@@ -318,7 +376,12 @@ function refresh() {
   // listeyi çek
   useEffect(() => {
     const params = new URLSearchParams();
-    params.set('assignedTo', scopeMine ? 'me' : 'all');
+    // If user selected the 'reported' filter, always show reported items from everyone
+    if (status === 'reported') {
+      params.set('assignedTo', 'all');
+    } else {
+      params.set('assignedTo', scopeMine ? 'me' : 'all');
+    }
     if (status !== 'all') params.set('status', status);
     if (qd.trim()) params.set('q', qd.trim());
     params.set('page', String(page));
@@ -356,11 +419,13 @@ function refresh() {
       scheduleDateTime = new Date(`${scheduleDate}T${scheduleTime}`).toISOString();
     }
 
+    const finalMsg = appendAgentSignature(raw);
+
     await api(`/tickets/${unreachableId}/unreachable`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
-        resolutionText: raw,
+        resolutionText: finalMsg,
         scheduleDateTime: scheduleDateTime
       }),
     });
@@ -371,6 +436,132 @@ function refresh() {
     setScheduleDate('');
     setScheduleTime('');
     refresh();
+  }
+
+  function openReportModal(id: string) {
+    setReportId(id);
+    setReportText('Konu yazılım birimine iletilmiştir.');
+    setReportOpen(true);
+  }
+
+  async function submitReport() {
+    console.log('submitReport called', { reportId, reportText });
+    if (!reportId) {
+      alert('Gönderecek kayıt seçili değil. Lütfen yeniden deneyin.');
+      return;
+    }
+    const raw = reportText.trim();
+    if (!raw) {
+      alert('Lütfen iletilecek metni girin.');
+      return;
+    }
+
+    const finalMsg = appendAgentSignature(raw);
+    try {
+      const res = await api(`/tickets/${reportId}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resolutionText: finalMsg }),
+      });
+      console.log('report POST response', res);
+    } catch (e) {
+      console.warn('POST /report failed, trying fallback PUT', e);
+      // best-effort: if backend doesn't support /report, try a generic update
+      try {
+        const res2 = await api(`/tickets/${reportId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'reported', resolutionText: finalMsg }),
+        });
+        console.log('fallback PUT response', res2);
+      } catch (er) {
+        console.error('Report failed', er);
+        // fallback PUT already attempted below; do not notify group or show alert per UX request
+      }
+    }
+
+    setReportOpen(false);
+    setReportId(undefined);
+    setReportText('');
+    refresh();
+  }
+
+  // Notify-sender (private DM) modal
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [notifyId, setNotifyId] = useState<string | undefined>();
+  const [notifyText, setNotifyText] = useState('Mesajınız hatalı, iletişim alanı zorunludur.');
+
+  // Toasts
+  const [toasts, setToasts] = useState<Array<{ id: number; text: string; type?: 'success' | 'error' | 'info' }>>([]);
+  function showToast(text: string, type: 'success' | 'error' | 'info' = 'info') {
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    setToasts((t) => [...t, { id, text, type }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
+  }
+
+  function openNotifyModal(id: string) {
+    setNotifyId(id);
+    setNotifyText('Mesajınız hatalı, iletişim alanı zorunludur.');
+    setNotifyOpen(true);
+  }
+
+  // Analysis modal after resolving a ticket
+  const [analysisOpen, setAnalysisOpen] = useState(false);
+  const [analysisTicketId, setAnalysisTicketId] = useState<string | undefined>();
+  const [analysisDifficulty, setAnalysisDifficulty] = useState<'easy'|'medium'|'hard'|''>('');
+  const [analysisNote, setAnalysisNote] = useState('');
+
+  function openAnalysisModalFor(id: string) {
+    setAnalysisTicketId(id);
+    setAnalysisDifficulty('');
+    setAnalysisNote('');
+    setAnalysisOpen(true);
+  }
+
+  async function submitAnalysis() {
+    if (!analysisTicketId) return;
+    try {
+      await api(`/tickets/${analysisTicketId}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ difficulty: analysisDifficulty || undefined, note: analysisNote }),
+      });
+      setAnalysisOpen(false);
+      setAnalysisTicketId(undefined);
+      setAnalysisDifficulty('');
+      setAnalysisNote('');
+      showToast('Analiz kaydedildi', 'success');
+      refresh();
+    } catch (e) {
+      console.error('analyze failed', e);
+      showToast('Analiz kaydedilemedi', 'error');
+    }
+  }
+
+  async function submitNotify() {
+    if (!notifyId) return;
+    const raw = notifyText.trim();
+    if (!raw) {
+      alert('Lütfen mesaj girin.');
+      return;
+    }
+
+    try {
+      await api(`/tickets/${notifyId}/notify-sender`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: raw }),
+      });
+      showToast('Cevap gönderildi', 'success');
+      setNotifyOpen(false);
+      setNotifyId(undefined);
+      setNotifyText('');
+      refresh();
+    } catch (e) {
+      console.error('notify-sender failed', e);
+      showToast('Gönderilemedi', 'error');
+      // keep modal open so agent can retry or edit
+    }
   }
 
   async function deleteTicket(id: string) {
@@ -394,7 +585,7 @@ function refresh() {
     const raw = (t.telegram?.text || '').replace(/\r/g, '').trim();
     const detail = getField(raw, 'Detay');
     const topic = detail || '...';
-    const defaultText = `Kullanıcıya ${topic} hakkında destek verildi. \n -${agentName}`;
+    const defaultText = `Kullanıcıya ${topic} hakkında destek verildi.`;
     setResolveId(t.id);
     setResolveText(defaultText);
     setResolveOpen(true);
@@ -407,15 +598,19 @@ function refresh() {
     const payload = (onlyDetail || raw).trim();
     if (!payload) return;
 
+    const finalMsg = appendAgentSignature(payload);
+
     await api(`/tickets/${resolveId}/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resolutionText: payload }),
+      body: JSON.stringify({ resolutionText: finalMsg }),
     });
 
     setResolveOpen(false);
-    setResolveId(undefined);
     setResolveText('');
+    // after resolving, open analysis modal so agent can rate difficulty / add note
+    openAnalysisModalFor(resolveId);
+    setResolveId(undefined);
     setPage((p) => p); // refresh
     refresh();
   }
@@ -436,87 +631,129 @@ function refresh() {
 
   const pages = Math.max(1, Math.ceil(total / 10));
   const deletePermission = isSupervisor;
+  // build client-side visible list as a safety-net in case backend doesn't fully filter
+  let visibleItems = items.slice();
+  // apply status filter client-side (ensures 'reported' shows only reported tickets)
+  if (status !== 'all') {
+    visibleItems = visibleItems.filter((it) => String(it.status) === String(status));
+  }
   // apply agent filter client-side for supervisors
   const filteredItems = agentFilter
-    ? items.filter((it) => {
+    ? visibleItems.filter((it) => {
         const aid = typeof it.assignedTo === 'string' ? it.assignedTo : (it.assignedTo as any)?.id;
         return String(aid) === String(agentFilter);
       })
-    : items;
+    : visibleItems;
 
   return (
     <>
       <Header />
+      {/* Toast container */}
+      <div className="toast-container" aria-live="polite">
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast toast-${t.type || 'info'}`}>
+            {t.text}
+          </div>
+        ))}
+      </div>
       <div className="container">
         <h3 className="section-title">Görevler</h3>
 
-        {/* Toolbar */}
-        <div className="toolbar">
-          <div className="chips">
-            {(['all', 'open', 'resolved', 'unreachable'] as Status[]).map((s) => (
-              <button
-                key={s}
-                onClick={() => {
-                  setStatus(s);
-                  setPage(1);
-                }}
-                className={`chip ${status === s ? 'active' : ''}`}
-              >
-                {s === 'all' ? 'Tümü' : s === 'open' ? 'Açık' : s === 'resolved' ? 'Çözümlendi' : 'Ulaşılamadı'}
-              </button>
-            ))}
-          </div>
+        <div className="layout">
+          <aside className="sidebar">
+            <div style={{ marginBottom: 12, fontWeight: 800 }}>Filtreler</div>
+            <div className={`filter-section ${openAra ? 'open' : ''}`}>
+              <div className="filter-header" onClick={() => setOpenAra((v) => !v)} role="button" tabIndex={0}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Ara</div>
+                <div className={`chev ${openAra ? 'open' : ''}`} />
+              </div>
+              <div className="filter-content" style={{ display: openAra ? 'block' : 'none' }}>
+                <input className="input" placeholder="Ara isim, mesaj, agent" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+              </div>
+            </div>
+            <div className={`filter-section ${openDurum ? 'open' : ''}`}>
+              <div className="filter-header" onClick={() => setOpenDurum((v) => !v)} role="button" tabIndex={0}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Durum</div>
+                <div className={`chev ${openDurum ? 'open' : ''}`} />
+              </div>
+              <div className="filter-content" style={{ display: openDurum ? 'block' : 'none' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {(['all', 'open', 'resolved', 'unreachable', 'reported'] as Status[]).map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => {
+                        setStatus(s);
+                        setPage(1);
+                      }}
+                      className={`chip ${status === s ? 'active' : ''} ${s === 'reported' ? 'chip--reported' : ''}`}
+                      style={{ width: '100%', justifyContent: 'flex-start' }}
+                    >
+                      {s === 'all'
+                        ? 'Tümü'
+                        : s === 'open'
+                        ? 'Açık'
+                        : s === 'resolved'
+                        ? 'Çözümlendi'
+                        : s === 'reported'
+                        ? 'Yazılıma İletildi'
+                        : 'Ulaşılamadı'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
-          {/* view mode: list only (no box/list toggle) */}
+            <div className={`filter-section ${openAgent ? 'open' : ''}`}>
+              <div className="filter-header" onClick={() => setOpenAgent((v) => !v)} role="button" tabIndex={0}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Agent</div>
+                <div className={`chev ${openAgent ? 'open' : ''}`} />
+              </div>
+              <div className="filter-content" style={{ display: openAgent ? 'block' : 'none' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <button className={`chip ${!agentFilter ? 'active' : ''}`} onClick={() => setAgentFilter('')}>Tümü</button>
+                  {agents.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => setAgentFilter(a.id)}
+                      className={`chip ${String(agentFilter) === String(a.id) ? 'active' : ''}`}
+                      style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div className="avatar-sm">{a.name?.[0]}</div>
+                        <div style={{ fontWeight: 700 }}>{a.name}</div>
+                      </div>
+                      <div className="inline-muted">{a.externalUserId}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
 
-          <div className="toggle" title="Kapsam">
-            <button
-              className={`seg-btn ${scopeMine ? 'active' : ''}`}
-              onClick={() => {
-                setScopeMine(true);
-                setPage(1);
-              }}
-            >
-              Benim
-            </button>
-            <button
-              className={`seg-btn ${!scopeMine ? 'active' : ''}`}
-              onClick={() => {
-                setScopeMine(false);
-                setPage(1);
-              }}
-              disabled={!isSupervisor}
-            >
-              Tümü
-            </button>
-          </div>
+            <div className={`filter-section ${openKapsam ? 'open' : ''}`}>
+              <div className="filter-header" onClick={() => setOpenKapsam((v) => !v)} role="button" tabIndex={0}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Kapsam</div>
+                <div className={`chev ${openKapsam ? 'open' : ''}`} />
+              </div>
+              <div className="filter-content" style={{ display: openKapsam ? 'block' : 'none' }}>
+                <div className="toggle" style={{ width: '100%' }}>
+                  <button className={`seg-btn ${scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(true); setPage(1); }}>Benim</button>
+                  <button className={`seg-btn ${!scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(false); setPage(1); }} disabled={!isSupervisor}>Tümü</button>
+                </div>
+              </div>
+            </div>
 
-          <select
-            className="select"
-            value={sort}
-            onChange={(e) => {
-              setSort(e.target.value as Sort);
-              setPage(1);
-            }}
-          >
-            <option value="newest">Sırala: Yeni → Eski</option>
-            <option value="oldest">Sırala: Eski → Yeni</option>
-          </select>
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="inline-muted">{items.length} / {total}</div>
+                <select className="select" value={sort} onChange={(e) => { setSort(e.target.value as Sort); setPage(1); }}>
+                  <option value="newest">Yeni → Eski</option>
+                  <option value="oldest">Eski → Yeni</option>
+                </select>
+              </div>
+            </div>
+          </aside>
 
-          <input
-            className="input"
-            placeholder="Ara isim, mesaj, agent"
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setPage(1);
-            }}
-          />
-          <div className="spacer" />
-          <div className="inline-muted">
-            {items.length} / {total}
-          </div>
-        </div>
+          <main className="main">
 
         {/* Sonuçlar (list view only) */}
         {loading ? (
@@ -544,6 +781,8 @@ function refresh() {
                 canDelete={deletePermission}
                 agents={agents}
                 onReassign={onReassign}
+                onReport={openReportModal}
+                onNotify={openNotifyModal}
                 currentUserId={user?.id || ''}
                 isSuperAgent={effectiveIsSuperAgent}
               />
@@ -557,6 +796,8 @@ function refresh() {
 
         {/* Sayfalama */}
         {!loading && total > 0 && <Pagination page={page} pages={pages} onPage={setPage} />}
+          </main>
+        </div>
       </div>
 
       {/* Çözümlendi Modal */}
@@ -691,6 +932,57 @@ function refresh() {
           </button>
         </div>
       </Modal>
+      {/* Yazılıma İlet Modal */}
+      <Modal open={reportOpen} title="Yazılıma İlet" onClose={() => setReportOpen(false)}>
+        <div className="muted">Konu hakkında yazılıma iletilecek mesajı girin.</div>
+        <textarea value={reportText} onChange={(e) => setReportText(e.target.value)} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
+          <button className="btn btn-secondary" onClick={() => setReportOpen(false)}>
+            İptal
+          </button>
+          <button className="btn btn-success" onClick={submitReport}>
+            Gönder
+          </button>
+        </div>
+      </Modal>
+      {/* Kullanıcıyı Uyar Modal */}
+      <Modal open={notifyOpen} title="Kullanıcıyı Uyar" onClose={() => setNotifyOpen(false)}>
+        <div className="muted">Kullanıcıya gönderilecek özel mesajı düzenleyin.</div>
+        <textarea value={notifyText} onChange={(e) => setNotifyText(e.target.value)} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
+          <button className="btn btn-secondary" onClick={() => setNotifyOpen(false)}>
+            İptal
+          </button>
+          <button className="btn btn-success" onClick={submitNotify}>
+            Gönder
+          </button>
+        </div>
+      </Modal>
+
+      {/* Analiz Modal (çözümlendikten sonra açılır) */}
+      {analysisOpen && (
+        <div className="modal-backdrop">
+          <div className="modal">
+            <h4>Analiz - Talep Zorluğu ve Not</h4>
+            <div style={{ marginBottom: 8 }}>
+              <label className="inline-muted">Zorluk</label>
+              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                <button className={`chip ${analysisDifficulty === 'easy' ? 'active' : ''}`} onClick={() => setAnalysisDifficulty('easy')}>Kolay</button>
+                <button className={`chip ${analysisDifficulty === 'medium' ? 'active' : ''}`} onClick={() => setAnalysisDifficulty('medium')}>Orta</button>
+                <button className={`chip ${analysisDifficulty === 'hard' ? 'active' : ''}`} onClick={() => setAnalysisDifficulty('hard')}>Zor</button>
+              </div>
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label className="inline-muted">Not</label>
+              <textarea value={analysisNote} onChange={(e) => setAnalysisNote(e.target.value)} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setAnalysisOpen(false)}>Atla</button>
+              <button className="btn btn-success" onClick={submitAnalysis}>Kaydet</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

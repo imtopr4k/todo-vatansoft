@@ -100,18 +100,28 @@ bot.on('message', async (ctx) => {
   const miss = missingFields(data);
 
   if (miss.length > 0) {
-    // Özellikle 'id' yoksa istenen mesajı ver
-    if (miss.includes('id |ID |Id')) {
-      return ctx.reply('*id alanı zorunludur*', {
-        parse_mode: 'Markdown',
-        reply_to_message_id: ctx.message?.message_id
-      });
+    // Grup yerine kullanıcının özel mesajına (DM) bildir. Eğer DM başarısız olursa
+    // sessizce logla; kullanıcıya grup üzerinden tekrar bildirim göndermiyoruz.
+    const userId = ctx.from?.id;
+    const notifyText = miss.includes('id |ID |Id')
+      ? 'id alanı zorunludur'
+      : `Eksik alan(lar): ${miss.join(', ')}. Lütfen "id / iletisim / detay" alanlarını doldurun.`;
+
+    // Include the original message in the DM so the user sees what was wrong
+    const original = text || '(orijinal mesaj yok)';
+    const finalDM = `${notifyText}\n\nOrijinal mesaj:\n${original}`;
+
+    if (userId) {
+      try {
+        await ctx.telegram.sendMessage(userId, finalDM);
+      } catch (e) {
+        console.error('[bot] DM gönderilemedi (eksik alan bildirimi):', e);
+        // Bilerek grup içinde cevap vermiyoruz — opsiyonel: burada bir log/telemetry eklenebilir.
+      }
+    } else {
+      console.warn('[bot] Kullanıcı ID bulunamadı, DM gönderilemedi.');
     }
-    // Diğer eksikler için kibar özet
-    return ctx.reply(
-      `Eksik alan(lar): ${miss.join(', ')}. Lütfen "id / iletisim / detay" alanlarını doldurun.`,
-      { reply_to_message_id: ctx.message?.message_id }
-    );
+    return;
   }
 
   // Zorunlu alanlar tamam → API'ye ilet (burada HENÜZ atama yapma niyetini değiştirmediysen,
