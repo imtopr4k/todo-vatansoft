@@ -7,7 +7,7 @@ import { env } from './env';
 import authRoutes from './routes/auth';
 import ticketRoutes from './routes/tickets';
 import agentsRouter from './routes/agents';
-import botRoutes from './routes/bot'; 
+import botRoutes from './routes/bot';
 import adminRouter from './routes/admin';
 import { initScheduler } from './services/scheduler';
 
@@ -72,7 +72,8 @@ import { initScheduler } from './services/scheduler';
   });
 
   const server = http.createServer(app);
-  const io = new SocketIOServer(server, { cors: { origin: 'http://localhost:5173' } });
+  const io = new SocketIOServer(server, { cors: { origin: '*' } });
+  // const io = new SocketIOServer(server, { cors: { origin: 'http://localhost:5173' } });
   io.on('connection', () => {
     console.log('[socket] client connected');
   });
