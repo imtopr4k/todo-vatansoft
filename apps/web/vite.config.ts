@@ -12,9 +12,7 @@ export default defineConfig({
         hmr: {
             host: 'todo.vatansoft.net',
             // host: 'localhost',
-            port: 5173,
-            // Use the correct websocket protocol. For HTTPS public origin use 'wss'.
-            protocol: 'wss',
+            protocol: 'http',
         },
     },
 });
