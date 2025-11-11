@@ -54,7 +54,6 @@ bot.start(async (ctx) => {
   if (ctx.chat?.type !== 'private') return;
 
   const payloadRaw = (ctx.startPayload ?? '').trim();
-  console.log('[BOT] /start payload =', payloadRaw); // ➜ terminalde gör
 
   // aid-xxxxx veya aid_xxxxx kabul et; 24 hex şartını kaldıralım
   const m = payloadRaw.match(/^aid[-_](.+)$/i);
@@ -115,11 +114,9 @@ bot.on('message', async (ctx) => {
       try {
         await ctx.telegram.sendMessage(userId, finalDM);
       } catch (e) {
-        console.error('[bot] DM gönderilemedi (eksik alan bildirimi):', e);
         // Bilerek grup içinde cevap vermiyoruz — opsiyonel: burada bir log/telemetry eklenebilir.
       }
     } else {
-      console.warn('[bot] Kullanıcı ID bulunamadı, DM gönderilemedi.');
     }
     return;
   }
@@ -155,6 +152,26 @@ bot.on('callback_query', async (ctx) => {
   const data = String(ctx.callbackQuery?.data || '');
   const [kind, ticketId] = data.split(':');
   await ctx.answerCbQuery();
+});
+
+// /myid command - send user's Telegram id
+bot.command('myid', async (ctx) => {
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
+  // If in private chat, reply directly
+  if (ctx.chat?.type === 'private') {
+    return ctx.reply(`Telegram id'in: ${userId}`);
+  }
+
+  // In group - try to DM the user and acknowledge in group
+  try {
+    await ctx.telegram.sendMessage(userId, `Telegram id'in: ${userId}`);
+    // short group acknowledgement
+    await ctx.reply('Telegram id bilgisi özelden gönderildi.');
+  } catch (e) {
+    await ctx.reply(`Telegram id'in: ${userId}`);
+  }
 });
 
 bot.launch().then(() => console.log('[bot] started'));
