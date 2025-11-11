@@ -74,7 +74,6 @@ import { initScheduler } from './services/scheduler';
   const server = http.createServer(app);
   const io = new SocketIOServer(server, { cors: { origin: 'http://localhost:5173' } });
   io.on('connection', () => {
-    console.log('[socket] client connected');
   });
 
   server.listen(env.PORT, () => console.log(`[api] listening on ${env.PORT}`));

@@ -28,10 +28,8 @@ async function checkScheduledDMs() {
         ticket.scheduledDMAt = undefined;
         await ticket.save();
       } catch (e) {
-        console.error(`[scheduler] Failed to send DM for ticket ${ticket.id}:`, e);
       }
     }
   } catch (e) {
-    console.error('[scheduler] Error checking scheduled DMs:', e);
   }
 }

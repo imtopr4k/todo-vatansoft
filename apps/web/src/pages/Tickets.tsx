@@ -445,7 +445,6 @@ function refresh() {
   }
 
   async function submitReport() {
-    console.log('submitReport called', { reportId, reportText });
     if (!reportId) {
       alert('Gönderecek kayıt seçili değil. Lütfen yeniden deneyin.');
       return;
@@ -463,9 +462,8 @@ function refresh() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resolutionText: finalMsg }),
       });
-      console.log('report POST response', res);
+      
     } catch (e) {
-      console.warn('POST /report failed, trying fallback PUT', e);
       // best-effort: if backend doesn't support /report, try a generic update
       try {
         const res2 = await api(`/tickets/${reportId}`, {
@@ -473,9 +471,8 @@ function refresh() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: 'reported', resolutionText: finalMsg }),
         });
-        console.log('fallback PUT response', res2);
+       
       } catch (er) {
-        console.error('Report failed', er);
         // fallback PUT already attempted below; do not notify group or show alert per UX request
       }
     }
@@ -533,7 +530,6 @@ function refresh() {
       showToast('Analiz kaydedildi', 'success');
       refresh();
     } catch (e) {
-      console.error('analyze failed', e);
       showToast('Analiz kaydedilemedi', 'error');
     }
   }
@@ -558,7 +554,6 @@ function refresh() {
       setNotifyText('');
       refresh();
     } catch (e) {
-      console.error('notify-sender failed', e);
       showToast('Gönderilemedi', 'error');
       // keep modal open so agent can retry or edit
     }
@@ -570,7 +565,6 @@ function refresh() {
       await api(`/tickets/${id}`, { method: 'DELETE' });
       setPage((p) => p);
     } catch (e: any) {
-      console.log('Silinemedi: ' + e.message);
     }
   }
 

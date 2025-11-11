@@ -7,9 +7,7 @@ export async function api<T>(path: string, opts: RequestInit = {}) {
   // DEBUG: log outgoing API calls for easier tracing
   try {
     const bodyPreview = (opts.body && typeof opts.body === 'string') ? opts.body : undefined;
-    console.log('[api] fetch', { url: `${API}${path}`, method: opts.method || 'GET', body: bodyPreview });
   } catch (e) {
-    console.warn('[api] failed to log request', e);
   }
 
   const res = await fetch(`${API}${path}`, { ...opts, headers });

@@ -157,20 +157,30 @@ bot.on('callback_query', async (ctx) => {
 // /myid command - send user's Telegram id
 bot.command('myid', async (ctx) => {
   const userId = ctx.from?.id;
-  if (!userId) return;
+  console.log('[bot] /myid invoked', { chatType: ctx.chat?.type, fromId: ctx.from?.id, username: ctx.from?.username });
+  if (!userId) {
+    try { await ctx.reply("Kullanıcı id bulunamadı."); } catch (e) { console.warn('[bot] could not reply missing id', e); }
+    return;
+  }
 
-  // If in private chat, reply directly
+  // If in private chat, reply directly with plain id (RawDataBot-style)
   if (ctx.chat?.type === 'private') {
-    return ctx.reply(`Telegram id'in: ${userId}`);
+    try {
+      await ctx.reply(String(userId));
+    } catch (e) {
+      console.warn('[bot] failed to reply in private', e);
+    }
+    return;
   }
 
   // In group - try to DM the user and acknowledge in group
   try {
-    await ctx.telegram.sendMessage(userId, `Telegram id'in: ${userId}`);
+  await ctx.telegram.sendMessage(userId, String(userId));
     // short group acknowledgement
     await ctx.reply('Telegram id bilgisi özelden gönderildi.');
   } catch (e) {
-    await ctx.reply(`Telegram id'in: ${userId}`);
+    console.warn('[bot] failed to DM user for /myid', e);
+    try { await ctx.reply(String(userId)); } catch (ex) { console.warn('[bot] failed to reply in group fallback', ex); }
   }
 });
 

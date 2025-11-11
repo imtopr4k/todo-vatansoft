@@ -17,7 +17,7 @@ const TicketSchema = new Schema({
     }
   },
   status: { type: String, enum: ['open', 'resolved', 'unreachable', 'reported'], default: 'open' },
-  assignedTo: { type: Types.ObjectId, ref: 'Agent', required: true },
+  assignedTo: { type: Types.ObjectId, ref: 'Agent' },
   assignedAt: { type: Date, default: Date.now },
   resolutionText: { type: String },
   scheduledDMAt: { type: Date },

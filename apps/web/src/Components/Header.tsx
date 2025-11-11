@@ -39,7 +39,6 @@ export default function Header() {
           setIsSuperUser(true);
         }
       } catch (e) {
-        console.warn('Could not fetch agents for header active state', e);
       }
     }
     load();
@@ -66,6 +65,9 @@ export default function Header() {
             <Link to="/tickets" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Görevler</Link>
             <Link to="/stats" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>İstatistik</Link>
             <Link to="/analysis" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Analiz</Link>
+            {user?.role === 'supervisor' && (
+              <Link to="/admin" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Admin</Link>
+            )}
           </nav>
         </div>
       </div>
@@ -111,7 +113,6 @@ export default function Header() {
               } catch (e) {
                 // revert on error
                 setIsActive((s) => !!s);
-                console.error('[Header] set-active failed', e);
                 alert('Durum güncellenemedi');
               }
             }}

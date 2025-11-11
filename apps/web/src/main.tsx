@@ -6,12 +6,19 @@ import Dashboard from './pages/Dashboard';
 import Tickets from './pages/Tickets';
 import Stats from './pages/Stats';
 import Analysis from './pages/Analysis';
+import AdminUsers from './pages/AdminUsers';
 import { me } from './auth';
 import './styles.css';
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const user = me();
   return user ? children : <Navigate to="/login" replace/>;
+}
+
+function RequireSupervisor({ children }: { children: JSX.Element }) {
+  const user = me();
+  if (!user) return <Navigate to="/login" replace />;
+  return user.role === 'supervisor' ? children : <Navigate to="/" replace />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -23,6 +30,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/tickets" element={<RequireAuth><Tickets/></RequireAuth>} />
         <Route path="/stats" element={<RequireAuth><Stats/></RequireAuth>} />
   <Route path="/analysis" element={<RequireAuth><Analysis/></RequireAuth>} />
+    <Route path="/admin" element={<RequireSupervisor><AdminUsers/></RequireSupervisor>} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>
