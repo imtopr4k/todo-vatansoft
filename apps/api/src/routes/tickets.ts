@@ -87,7 +87,6 @@ r.get('/', async (req, res) => {
       pages: Math.max(1, Math.ceil(total / limit)),
     });
   } catch (err) {
-    console.error('[GET /tickets] error', err);
     return res.status(500).json({ message: 'Internal error' });
   }
 });
@@ -105,19 +104,25 @@ r.post('/:id/resolve', async (req, res) => {
     }
 
     const msg = String((resolutionText ?? '')).trim();
+    const prevStatus = t.status;
     t.status = 'resolved';
     t.resolutionText = msg;
     await t.save();
 
     try {
-      await sendReply(t.telegram.chatId, t.telegram.messageId, msg || 'Çözümlendi');
+      // If transitioning from unreachable or reported -> resolved, show transition
+      let signature = statusLabel(t.status);
+      if (prevStatus && (prevStatus === 'unreachable' || prevStatus === 'reported')) {
+        signature = `${statusLabel(prevStatus)} => ${statusLabel(t.status)}`;
+      }
+      const final = `${msg || 'Çözümlendi'}${signature ? '\n\n-' + signature : ''}`;
+      await sendReply(t.telegram.chatId, t.telegram.messageId, final);
     } catch (e) {
-      console.error('[tickets:resolve] send failed', e);
     }
 
     res.json({ ok: true });
   } catch (e) {
-    console.error('[POST /tickets/:id/resolve]', e);
+  
     res.status(500).json({ message: 'Internal error' });
   }
 });
@@ -144,16 +149,15 @@ r.post('/:id/report', async (req, res) => {
     // Send a group reply to the original telegram message to notify that it was reported
     try {
       if (t.telegram?.chatId && t.telegram?.messageId) {
-        await sendReply(t.telegram.chatId, t.telegram.messageId, msg || 'Konu yazılıma iletilmiştir');
+  const label = statusLabel(t.status);
+  const final = `${msg || 'Konu yazılıma iletilmiştir'}${label ? '\n\n-' + label : ''}`;
+  await sendReply(t.telegram.chatId, t.telegram.messageId, final);
       }
     } catch (e) {
-      console.error('[tickets:report] group send failed', e);
-      // don't fail the request because the main goal (mark as reported) succeeded
     }
 
     return res.json({ ok: true });
   } catch (e) {
-    console.error('[POST /tickets/:id/report]', e);
     return res.status(500).json({ message: 'Internal error' });
   }
 });
@@ -163,9 +167,32 @@ r.post('/:id/report', async (req, res) => {
 r.get('/stats/senders', async (req, res) => {
   try {
     // We will aggregate in JS to be tolerant to missing fields and keep logic simple
-    const list = await Ticket.find({}).select('telegram.from').lean();
+    const list = await Ticket.find({}).select('telegram.from telegram.text').lean();
 
-    const map = new Map<string, { name: string; id?: number | string; count: number }>();
+    function extractProject(text?: string) {
+      if (!text) return null;
+      const lines = String(text).split(/\r?\n/);
+      for (const line of lines) {
+        const m = line.match(/\bproje\s*[\.:：\-]?\s*(.+)$/i);
+        if (m && m[1]) return m[1].trim();
+      }
+      // try english fallback
+      const m2 = String(text).match(/\bproject\s*[\.:：\-]?\s*(.+)$/i);
+      if (m2 && m2[1]) return m2[1].trim();
+      return null;
+    }
+
+    function normalizeProjKey(s: string) {
+      return String(s || '')
+        .trim()
+        .toLocaleLowerCase('tr-TR')
+        .replace(/[\s]+/g, ' ')
+        .replace(/["'`·•••\*\(\)\[\]{}<>]/g, '')
+        .normalize('NFKD')
+        .replace(/\p{Diacritic}/gu, '');
+    }
+
+    const map = new Map<string, { name: string; id?: number | string; count: number; projects?: Record<string, number> }>();
 
     for (const t of list) {
       const from = (t as any).telegram?.from || {};
@@ -174,14 +201,66 @@ r.get('/stats/senders', async (req, res) => {
       const key = id ? `id:${id}` : `name:${name}`;
       const prev = map.get(key);
       if (prev) prev.count += 1;
-      else map.set(key, { name, id: id ?? undefined, count: 1 });
+      else map.set(key, { name, id: id ?? undefined, count: 1, projects: {} });
+
+      // project extraction
+      const proj = extractProject((t as any).telegram?.text);
+      if (proj) {
+        const entry = map.get(key)!;
+        entry.projects = entry.projects || {};
+        const norm = normalizeProjKey(proj);
+        if (!entry.projects[norm]) entry.projects[norm] = { count: 0, variants: {} } as any;
+        entry.projects[norm].count = (entry.projects[norm].count || 0) + 1;
+        entry.projects[norm].variants[proj] = (entry.projects[norm].variants[proj] || 0) + 1;
+      }
     }
 
-    const out = Array.from(map.values()).sort((a, b) => b.count - a.count);
+    const out = Array.from(map.values()).map(v => {
+      let projects = v.projects || {};
+
+      // Merge variants where a normalized key contains a shorter key
+      // e.g. 'salon' and 'salon randevuda' -> group under 'salon'
+      const keys = Object.keys(projects || {});
+      const merged: any = {};
+      const used = new Set<string>();
+      keys.sort((a, b) => a.length - b.length); // prefer shortest base
+      for (const k of keys) {
+        if (used.has(k)) continue;
+        merged[k] = { ...(projects[k] as any) };
+        // ensure shape
+        merged[k].count = merged[k].count || 0;
+        merged[k].variants = merged[k].variants || {};
+        for (const kk of keys) {
+          if (kk === k || used.has(kk)) continue;
+          // if kk contains k (longer phrase containing the shorter base), merge kk into k
+          if (kk.includes(k)) {
+            merged[k].count = (merged[k].count || 0) + (projects[kk].count || 0);
+            merged[k].variants = { ...(merged[k].variants || {}), ...(projects[kk].variants || {}) };
+            used.add(kk);
+          }
+        }
+      }
+
+      // build top list from merged
+      const top = Object.keys(merged).map(k => {
+        const p = merged[k];
+        const variants = p.variants || {};
+        const varKeys = Object.keys(variants);
+        let display = k;
+        if (varKeys.length) {
+          varKeys.sort((a, b) => (variants[b] || 0) - (variants[a] || 0));
+          display = varKeys[0];
+        }
+        display = String(display).trim();
+        if (display.length) display = display[0].toUpperCase() + display.slice(1);
+        return { name: display, count: p.count };
+      }).sort((a, b) => b.count - a.count).slice(0, 3);
+
+      return { name: v.name, id: v.id, count: v.count, topProjects: top };
+    }).sort((a, b) => b.count - a.count);
 
     return res.json(out);
   } catch (e) {
-    console.error('[GET /tickets/stats/senders]', e);
     return res.status(500).json({ message: 'Internal error' });
   }
 });
@@ -214,10 +293,20 @@ r.get('/stats/agents', async (req, res) => {
     const out = Array.from(map.values()).sort((a, b) => b.total - a.total);
     return res.json(out);
   } catch (e) {
-    console.error('[GET /tickets/stats/agents]', e);
     return res.status(500).json({ message: 'Internal error' });
   }
 });
+
+function statusLabel(key?: string) {
+  switch (String(key || '').toLowerCase()) {
+    case 'resolved': return 'Çözümlendi';
+    case 'reported': return 'Yazılıma iletildi';
+    case 'unreachable': return 'Ulaşılamadı';
+    case 'open': return 'Açık';
+    case 'assigned': return 'Atandı';
+    default: return String(key || '').length ? String(key) : '';
+  }
+}
 
 // PUT /tickets/:id
 // Generic update endpoint used as a fallback by the UI to set status/resolutionText
@@ -248,7 +337,6 @@ r.put('/:id', async (req, res) => {
     await t.save();
     return res.json({ ok: true });
   } catch (e) {
-    console.error('[PUT /tickets/:id]', e);
     return res.status(500).json({ message: 'Internal error' });
   }
 });
@@ -272,10 +360,13 @@ r.post('/:id/unreachable', async (req, res) => {
     // Grup mesajını hemen gönder
     try {
       if (t.telegram?.chatId && t.telegram?.messageId) {
-        await sendReply(t.telegram.chatId, t.telegram.messageId, msg || 'wp üzerinden iletişime geçildi');
+        const actor = await Agent.findById(auth.sub).lean();
+        const actorName = actor?.name || '';
+        const label = statusLabel(t.status);
+        const final = `${msg || 'wp üzerinden iletişime geçildi'}${label ? '\n\n-' + label : ''}`;
+        await sendReply(t.telegram.chatId, t.telegram.messageId, final);
       }
     } catch (e) {
-      console.error('[tickets:unreachable] group send failed', e);
     }
 
     // Eğer zamanlama varsa, parse et ve eğer geçmişe tarihlendiyse DM'i hemen gönder,
@@ -286,7 +377,6 @@ r.post('/:id/unreachable', async (req, res) => {
       if (!isNaN(parsed.getTime())) {
         scheduledDate = parsed;
       } else {
-        console.warn('[tickets:unreachable] invalid scheduleDateTime, will treat as immediate', scheduleDateTime);
       }
     }
 
@@ -302,16 +392,17 @@ r.post('/:id/unreachable', async (req, res) => {
       try {
         const actor = await Agent.findById(auth.sub);
         if (actor?.telegramUserId && t.telegram?.text) {
-          await sendDM(actor.telegramUserId, `Lütfen ${t.telegram.text} konusu ile ilgili müşteri ile iletişime geç.`);
-        }
+            const note = `Lütfen ${t.telegram.text} konusu ile ilgili müşteri ile iletişime geç.`;
+            const label = statusLabel(t.status);
+            const final = `${note}${label ? '\n\n-' + t.telegram?.from?.displayName : ''}`;
+            await sendDM(actor.telegramUserId, final);
+          }
       } catch (e) {
-        console.error('[tickets:unreachable] dm failed', e);
       }
     }
 
     res.json({ ok: true });
   } catch (e) {
-    console.error('[POST /tickets/:id/unreachable]', e);
     res.status(500).json({ message: 'Internal error' });
   }
 });
@@ -340,7 +431,6 @@ r.post('/:id/analyze', async (req, res) => {
 
     return res.json({ ok: true });
   } catch (e) {
-    console.error('[POST /tickets/:id/analyze]', e);
     return res.status(500).json({ message: 'Internal error' });
   }
 });
@@ -378,7 +468,6 @@ r.get('/analysis', async (req, res) => {
 
     return res.json(out);
   } catch (e) {
-    console.error('[GET /tickets/analysis]', e);
     return res.status(500).json({ message: 'Internal error' });
   }
 });
@@ -397,7 +486,6 @@ r.delete('/:id', async (req, res) => {
     }
     return res.status(403).json({ message: 'Forbidden' });
   } catch (e) {
-    console.error('[DELETE /tickets/:id] error', e);
     return res.status(500).json({ message: 'Internal error' });
   }
 });
@@ -414,17 +502,13 @@ r.put('/:id/assign', async (req, res) => {
   if (!t) return res.status(404).json({ message: 'Ticket bulunamadı' });
 
 
-  console.log('[tickets:assign] incoming', { ticketId: id, authSub: auth.sub, toAgentId, assignedToBefore: String(t.assignedTo) });
 
     // Atama izni kontrolü
   const requester = await Agent.findById(auth.sub).lean();
-  if (!requester) console.warn('[tickets:assign] requester not found for auth.sub', auth.sub);
-  else console.log('[tickets:assign] requester', { id: requester._id.toString(), externalUserId: requester.externalUserId, role: requester.role });
     const isSuperAgent = auth.role === 'supervisor' || ['1', '1009'].includes(String(requester?.externalUserId));
     
     // Eğer süper ajan değilse, sadece kendisine atanmış görevleri yeniden atayabilir
     if (!isSuperAgent && String(t.assignedTo) !== auth.sub) {
-      console.warn('[tickets:assign] forbidden - requester not allowed to reassign', { requesterId: auth.sub, ticketAssignedTo: String(t.assignedTo) });
       return res.status(403).json({ message: 'Bu görevi yeniden atama yetkiniz yok' });
     }
 
@@ -439,10 +523,8 @@ r.put('/:id/assign', async (req, res) => {
     toAgent = await Agent.findById(toAgentId).lean();
     if (toAgent) matchedBy = 'id';
       } else {
-        console.warn('[tickets:assign] toAgentId is not a valid ObjectId, will try externalUserId lookup', toAgentId);
       }
     } catch (e) {
-      console.warn('[tickets:assign] findById threw, will fallback to externalUserId', e);
     }
 
     if (!toAgent) {
@@ -450,18 +532,12 @@ r.put('/:id/assign', async (req, res) => {
       if (toAgent) matchedBy = 'externalUserId';
       if (toAgent) usedFallback = true;
     }
-
-    if (usedFallback) console.warn('[tickets:assign] toAgentId matched by externalUserId fallback', toAgent.externalUserId, toAgent._id);
     if (!toAgent) {
-      console.warn('[tickets:assign] toAgent not found for toAgentId', toAgentId);
       return res.status(400).json({ message: 'Hedef agent bulunamadı' });
     }
 
-    console.log('[tickets:assign] resolved toAgent', { matchedBy, toAgentId: String(toAgent._id), toAgentName: toAgent.name, toAgentExternalId: String(toAgent.externalUserId) });
-
     // Business rule: never allow assigning to externalUserId '1'
     if (String(toAgent.externalUserId) === '1') {
-      console.warn('[tickets:assign] prevented assign to externalUserId=1');
       return res.status(400).json({ message: 'Bu kullanıcıya atama yapılamaz' });
     }
   // Güncelle
@@ -472,25 +548,22 @@ r.put('/:id/assign', async (req, res) => {
   t.history.push({ at: new Date(), byAgentId: requester?._id, action: 'reassign', note: `from ${String(fromAgent?._id || '—')} to ${String(toAgent._id)}` });
   await t.save();
 
-  console.log('[tickets:assign] saved', { ticketId: id, assignedToAfter: String(t.assignedTo) });
-
     // Telegram’a bildir (orijinal mesaja reply)
     const fromName = fromAgent?.name || '—';
     const toName = toAgent.name || '—';
-    const notify = `Görev el değiştirdi\n${fromName} => ${toName}`;
-
+    const notifyBase = `Görev el değiştirdi\n${fromName} => ${toName}`;
     try {
       if (t.telegram?.chatId && t.telegram?.messageId) {
+        const label = statusLabel('assigned');
+        const notify = `${notifyBase}${label ? '\n\n-' + label : ''}`;
         await sendReply(t.telegram.chatId, t.telegram.messageId, notify);
       }
     } catch (e) {
-      console.error('[tickets:assign] telegram notify fail', e);
       // Bildirim düşmese de atama başarılıdır; 200 döndürmeye devam ediyoruz.
     }
 
   return res.json({ ok: true, assignedTo: { id: String(toAgent._id), name: toAgent.name }, matchedBy });
   } catch (e) {
-    console.error('[PUT /tickets/:id/assign] error', e);
     return res.status(500).json({ message: 'Internal error' });
   }
 });
@@ -513,16 +586,18 @@ r.post('/:id/notify', async (req, res) => {
 
     try {
       if (t.telegram?.chatId && t.telegram?.messageId) {
-        await sendReply(t.telegram.chatId, t.telegram.messageId, msg);
+        const label = statusLabel(t.status);
+        const actor = await Agent.findById(auth.sub).lean();
+        const actorName = actor?.name || '';
+        const final = `${msg}${label ? '\n\n-' + label : ''}`;
+        await sendReply(t.telegram.chatId, t.telegram.messageId, final);
       }
     } catch (e) {
-      console.error('[tickets:notify] send failed', e);
       return res.status(500).json({ message: 'Send failed' });
     }
 
     return res.json({ ok: true });
   } catch (e) {
-    console.error('[POST /tickets/:id/notify]', e);
     return res.status(500).json({ message: 'Internal error' });
   }
 });
@@ -547,18 +622,18 @@ r.post('/:id/notify-sender', async (req, res) => {
 
     const baseMsg = String((message ?? '').trim()) || 'Mesajınız hatalı, iletişim alanı zorunludur.';
     const original = (t as any).telegram?.text || '(orijinal mesaj yok)';
+    const actor = await Agent.findById(auth.sub).lean();
+    const actorName = actor?.name || '';
     const text = `${baseMsg}\n\nOrijinal mesaj:\n${original}`;
 
     try {
       await sendDM(Number(userId), text);
     } catch (e) {
-      console.error('[tickets:notify-sender] sendDM failed', e);
       return res.status(500).json({ message: 'Send failed' });
     }
 
     return res.json({ ok: true });
   } catch (e) {
-    console.error('[POST /tickets/:id/notify-sender]', e);
     return res.status(500).json({ message: 'Internal error' });
   }
 });

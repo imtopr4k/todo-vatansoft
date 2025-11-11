@@ -27,8 +27,28 @@ r.post('/intake', async (req, res) => {
     chosen = await assignAgentForMessage(text);
   } catch (e) {
     if ((e as Error).message === 'NO_ACTIVE_AGENT') {
-      await sendReply(chatId, messageId, 'Atanacak aktif agent bulunamadı.');
-      return res.status(409).json({ message: 'NO_ACTIVE_AGENT' });
+      // No active agent: create a ticket without assignedTo and keep it pending.
+      const t = await Ticket.create({
+        source: 'telegram',
+        telegram: {
+          chatId, messageId, text,
+          from: from ? {
+            id: from.id,
+            username: from.username,
+            firstName: from.firstName,
+            lastName: from.lastName,
+            displayName: from.displayName
+          } : undefined
+        },
+        status: 'open'
+      });
+
+      try {
+        await sendReply(chatId, messageId, 'Atanacak aktif agent bulunamadı; mesaj sıraya alındı. En kısa sürede atanacaktır.');
+      } catch (ex) {
+      }
+
+      return res.status(200).json({ ticketId: String(t._id), pending: true });
     }
     throw e;
   }
