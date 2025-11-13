@@ -26,6 +26,8 @@ export default function Header() {
 
   const [isActive, setIsActive] = useState<boolean | null>(null);
   const [isSuperUser, setIsSuperUser] = useState(false);
+  const [specialActive, setSpecialActive] = useState<Array<{ id: string; name: string; externalUserId?: string }>>([]);
+  const [showSpecialView, setShowSpecialView] = useState(false);
   const [adminView, setAdminView] = useState<'agent' | 'temsilci'>(() => (localStorage.getItem('adminViewMode') === 'agents' ? 'agent' : 'temsilci'));
 
   useEffect(() => {
@@ -37,6 +39,19 @@ export default function Header() {
         if (mounted) setIsActive(!!meAgent?.isActive);
         if (meAgent && String(meAgent.externalUserId) === '1') {
           setIsSuperUser(true);
+        }
+        // Only show this special view to users with externalUserId 1 or 1907
+        const myExt = meAgent ? String(meAgent.externalUserId) : '';
+        const canSee = ['1', '1907'].includes(myExt);
+        if (mounted) setShowSpecialView(canSee);
+        if (canSee) {
+          // list active other agents (exclude 1 and 1907 themselves)
+          const others = list
+            .filter(a => !!a.isActive && !['1', '1907'].includes(String(a.externalUserId)))
+            .map(a => ({ id: String(a.id), name: a.name, externalUserId: String(a.externalUserId) }));
+          if (mounted) setSpecialActive(others);
+        } else {
+          if (mounted) setSpecialActive([]);
         }
       } catch (e) {
       }
@@ -69,6 +84,16 @@ export default function Header() {
               <Link to="/admin" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Admin</Link>
             )}
           </nav>
+          {specialActive && specialActive.length > 0 && (
+            <div style={{ display: 'flex', gap: 8, marginLeft: 8, alignItems: 'center' }}>
+              {specialActive.map(a => (
+                <div key={a.id} className="assigned-pill" title={`#${a.externalUserId}`} style={{ padding: '6px 10px' }}>
+                  <span className="pill-dot" aria-hidden style={{ marginLeft: -4 }} />
+                  <span style={{ fontWeight: 700 }}>{a.name || a.externalUserId}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

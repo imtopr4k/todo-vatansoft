@@ -8,16 +8,6 @@ import { sendReply, sendDM } from '../services/telegram';
 const r = Router();
 r.use(requireAuth);
 
-/**
- * GET /tickets
- * Query:
- *  - assignedTo = 'me' | 'all'
- *  - status = 'open'|'resolved'|'unreachable'
- *  - q = string
- *  - page = int
- *  - limit = int
- *  - sort = 'newest' | 'oldest'
- */
 r.get('/', async (req, res) => {
   try {
     const auth = (req as any).auth as { sub: string; role: 'agent' | 'supervisor' };
