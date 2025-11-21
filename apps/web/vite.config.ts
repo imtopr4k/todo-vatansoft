@@ -11,7 +11,10 @@ export default defineConfig({
         origin: 'http://todo.vatansoft.net',
         hmr: {
              host: 'todo.vatansoft.net',
-             protocol: 'http'
+            //  host: 'localhost',
+            port: 5173,
+            //  protocol: 'ws',
+             protocol: 'http',
         },
     },
 });

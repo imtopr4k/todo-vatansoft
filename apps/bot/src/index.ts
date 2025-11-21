@@ -184,6 +184,20 @@ bot.command('myid', async (ctx) => {
   }
 });
 
+// Private mesajda sadece "id" yazılırsa kullanıcının Telegram id'sini döndür ve
+// kolaylık olması için `/start aid-<ID>` formatını da ilet.
+bot.hears(/^id$/i, async (ctx) => {
+  if (ctx.chat?.type !== 'private') return;
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  try {
+    await ctx.reply(String(userId));
+    await ctx.reply(`/start aid-${String(userId)}`);
+  } catch (e) {
+    console.warn('[bot] failed to reply to private id request', e);
+  }
+});
+
 bot.launch().then(() => console.log('[bot] started'));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));

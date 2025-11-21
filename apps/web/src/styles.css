@@ -139,6 +139,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:Inter, ui-sans-
 .ticket .card.status-reported{border-color: rgba(124,58,237,0.08); box-shadow:0 12px 32px rgba(124,58,237,0.06)}
 .ticket .avatar-lg{background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03)}
 .assigned-pill{display:inline-flex;align-items:center;gap:8px;padding:8px 10px;border-radius:12px;background:var(--glass);border:1px solid var(--border)}
+.pill-dot{width:10px;height:10px;border-radius:999px;background:var(--success);box-shadow:0 4px 10px rgba(16,185,129,0.12);display:inline-block}
 .assigned-name{font-weight:700;color:var(--text)}
 
 /* assigned select variant for reassign UI */
@@ -167,6 +168,35 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:Inter, ui-sans-
 .modal-backdrop{position:fixed;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0.45),rgba(0,0,0,0.6));display:grid;place-items:center;z-index:60}
 .modal{width:min(640px,94vw);background:var(--card);border-radius:14px;padding:18px;border:1px solid var(--border);box-shadow:var(--shadow)}
 .modal textarea{width:100%;min-height:110px;padding:12px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text)}
+
+/* Modal interior improvements */
+.modal h4{margin:0 0 10px;font-size:18px;color:var(--text)}
+.modal .modal-body{display:grid;gap:12px}
+.modal .section{padding:12px 0}
+.modal .section + .section{border-top:1px solid rgba(255,255,255,0.03);padding-top:16px}
+.modal .section .section-title{font-weight:700;margin-bottom:8px;color:var(--text)}
+.modal .section .section-sub{color:var(--muted);font-size:13px;margin-bottom:8px}
+
+/* Dark mode: slightly stronger separators inside modal for clarity */
+.dark .modal .section + .section{border-top:1px solid rgba(255,255,255,0.04)}
+
+/* Light mode: remove borders and make inputs look flatter */
+html:not(.dark) .modal{border:none;box-shadow:0 8px 30px rgba(16,24,40,0.06)}
+html:not(.dark) .modal textarea{border:none;background:transparent}
+html:not(.dark) .modal .input{border:none;background:transparent}
+html:not(.dark) .date-input{border:none;background:transparent}
+html:not(.dark) .agent-dropdown-menu, html:not(.dark) .agent-dropdown-item{border:none}
+
+/* Date input tweaks: ensure icon visible on both themes and remove heavy borders */
+.date-input{padding:10px 12px;border-radius:10px;background:var(--glass);border:1px solid var(--border)}
+.date-input input[type="date"]{font-weight:700}
+.date-input input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(1) brightness(0.9) saturate(0.6)}
+html:not(.dark) .date-input input[type="date"]::-webkit-calendar-picker-indicator{filter:none}
+
+/* Make the modal fields more airy in dark mode (matches screenshot aesthetics) */
+.dark .modal{padding:22px;border-radius:14px}
+.dark .modal .section{padding:14px 0}
+
 
 /* small helpers */
 .inline-muted{font-size:13px}
