@@ -28,6 +28,7 @@ export default function Header() {
   const [isSuperUser, setIsSuperUser] = useState(false);
   const [allAgents, setAllAgents] = useState<Array<{ id: string; name: string; externalUserId?: string; isActive: boolean }>>([]);
   const [showSpecialView, setShowSpecialView] = useState(false);
+  const [showOnlineUsers, setShowOnlineUsers] = useState(false);
   const [adminView, setAdminView] = useState<'agent' | 'temsilci'>(() => (localStorage.getItem('adminViewMode') === 'agents' ? 'agent' : 'temsilci'));
 
   useEffect(() => {
@@ -64,6 +65,10 @@ export default function Header() {
         const myExt = meAgent ? String(meAgent.externalUserId) : '';
         const canSee = ['1', '1907'].includes(myExt);
         if (mounted) setShowSpecialView(canSee);
+        
+        // Online kullanıcıları sadece externalUserId 1009 görebilir
+        const canSeeOnlineUsers = myExt === '1009';
+        if (mounted) setShowOnlineUsers(canSeeOnlineUsers);
       } catch (e) {
         console.error('Failed to load agents:', e);
       }
@@ -101,7 +106,7 @@ export default function Header() {
               <Link to="/admin" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Admin</Link>
             )}
           </nav>
-          {allAgents && allAgents.length > 0 && (
+          {showOnlineUsers && allAgents && allAgents.length > 0 && (
             <div style={{ display: 'flex', gap: 8, marginLeft: 8, alignItems: 'center' }}>
               {allAgents.map(a => (
                 <div key={a.id} className="assigned-pill" title={`${a.name} (#${a.externalUserId}) - ${a.isActive ? 'Aktif' : 'Pasif'}`} style={{ padding: '6px 10px' }}>
