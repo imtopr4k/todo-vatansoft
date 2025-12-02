@@ -464,6 +464,7 @@ export default function Tickets() {
   const [notifications, setNotifications] = useState<Array<{ id: string; type: 'reported' | 'waiting'; time: number }>>([]);
   const [lastCheckedReported, setLastCheckedReported] = useState<string[]>([]);
   const [lastCheckedWaiting, setLastCheckedWaiting] = useState<string[]>([]);
+  const [lastTotalCount, setLastTotalCount] = useState<number | null>(null);
 
   // Append agent signature to outgoing messages (not visible in textarea)
   function appendAgentSignature(raw: string) {
@@ -549,6 +550,26 @@ export default function Tickets() {
     
     return () => clearInterval(interval);
   }, [lastCheckedReported, lastCheckedWaiting, user]);
+
+  // Yeni ticket kontrolü - her 10 saniyede bir toplam ticket sayısını kontrol et
+  useEffect(() => {
+    if (!user) return;
+    
+    const interval = setInterval(() => {
+      // Tüm ticket'ları say (kime atandığına bakmadan)
+      api<{ total: number }>('/tickets?assignedTo=all&page=1&limit=1')
+        .then((res) => {
+          if (lastTotalCount !== null && res.total > lastTotalCount) {
+            // Yeni ticket geldi, sayfayı yenile
+            refresh();
+          }
+          setLastTotalCount(res.total);
+        })
+        .catch(() => {});
+    }, 10000); // 10 saniye
+    
+    return () => clearInterval(interval);
+  }, [lastTotalCount, user]);
 
 function refresh() {
   setRefreshKey(k => k + 1);

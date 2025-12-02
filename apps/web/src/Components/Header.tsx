@@ -63,7 +63,7 @@ export default function Header() {
         
         // Only show this special view to users with externalUserId 1 or 1907
         const myExt = meAgent ? String(meAgent.externalUserId) : '';
-        const canSee = ['1', '1907'].includes(myExt);
+        const canSee = ['1009'].includes(myExt);
         if (mounted) setShowSpecialView(canSee);
         
         // Online kullanıcıları sadece externalUserId 1009 görebilir
