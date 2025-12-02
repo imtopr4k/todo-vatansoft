@@ -13,7 +13,7 @@ export interface AgentDTO {
 }
 
 
-export type TicketStatus = 'open' | 'resolved' | 'unreachable';
+export type TicketStatus = 'open' | 'resolved' | 'unreachable' | 'reported' | 'waiting';
 
 export interface TicketDTO {
   id: string;

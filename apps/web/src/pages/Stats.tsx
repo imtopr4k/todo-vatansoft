@@ -1,47 +1,52 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import Header from '../Components/Header';
+import { me } from '../auth';
 
 export default function Stats() {
+  const user = me();
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'senders' | 'agents'>('senders');
   const [items, setItems] = useState<any[]>([]);
   const [agents, setAgents] = useState<any[]>([]);
+  const [currentUserAgent, setCurrentUserAgent] = useState<any>(null);
+  
+  // Tarih filtreleri - sadece 1009 için
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
 
   useEffect(() => {
+    // Kullanıcının agent bilgisini yükle
+    api('/agents').then((res: any[]) => {
+      setAgents(res || []);
+      const meAgent = res.find((a) => String(a.id) === String(user?.id));
+      setCurrentUserAgent(meAgent);
+    }).catch(() => {
+      setAgents([]);
+    });
+  }, [user?.id]);
+
+  // Fetch fonksiyonu
+  const fetchStats = () => {
     setLoading(true);
-    if (view === 'senders') {
-      api('/tickets/stats/senders')
-        .then((res) => setItems(res))
-        .catch(() => setItems([]))
-        .finally(() => setLoading(false));
-    } else {
-      api('/tickets/stats/agents')
-        .then((res) => setItems(res))
-        .catch(() => setItems([]))
-        .finally(() => setLoading(false));
-    }
-  }, []);
+    const params = new URLSearchParams();
+    
+    // Tarih filtrelerini ekle
+    if (fromDate) params.set('from', new Date(fromDate).toISOString());
+    if (toDate) params.set('to', new Date(toDate).toISOString());
+    
+    const endpoint = view === 'senders' 
+      ? `/tickets/stats/senders?${params.toString()}` 
+      : `/tickets/stats/agents?${params.toString()}`;
+    
+    api(endpoint)
+      .then((res) => setItems(res))
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false));
+  };
 
   useEffect(() => {
-    // load agents map for matching senders to agent names
-    api('/agents').then((res) => setAgents(res || [])).catch(() => setAgents([]));
-  }, []);
-
-  // refetch when view changes
-  useEffect(() => {
-    setLoading(true);
-    if (view === 'senders') {
-      api('/tickets/stats/senders')
-        .then((res) => setItems(res))
-        .catch(() => setItems([]))
-        .finally(() => setLoading(false));
-    } else {
-      api('/tickets/stats/agents')
-        .then((res) => setItems(res))
-        .catch(() => setItems([]))
-        .finally(() => setLoading(false));
-    }
+    fetchStats();
   }, [view]);
 
   const total = items.reduce((s, it) => s + (it.count || it.total || 0), 0) || 0;
@@ -54,6 +59,9 @@ export default function Stats() {
     return found ? found.name : null;
   }
 
+  // Sadece externalUserId 1009 için tarih filtresini göster
+  const showDateFilter = currentUserAgent && String(currentUserAgent.externalUserId) === '1009';
+
   return (
     <>
       <Header />
@@ -61,13 +69,44 @@ export default function Stats() {
         <h3 className="section-title">İstatistikler — Gönderenler</h3>
 
         <div className="card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <div className="muted">Telegram üzerinden gelen taleplere göre istatistikler</div>
               <div style={{ display: 'flex', gap: 6, marginLeft: 12 }}>
                 <button className={`chip ${view === 'senders' ? 'active' : ''}`} onClick={() => setView('senders')}>Temsilciler</button>
                 <button className={`chip ${view === 'agents' ? 'active' : ''}`} onClick={() => setView('agents')}>Teknik</button>
               </div>
+              
+              {/* Tarih filtresi - sadece externalUserId 1009 için */}
+              {showDateFilter && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginLeft: 12 }}>
+                  <input 
+                    type="date" 
+                    value={fromDate} 
+                    onChange={(e) => setFromDate(e.target.value)}
+                    className="input"
+                    style={{ padding: '6px 10px', fontSize: '14px' }}
+                    placeholder="Başlangıç"
+                  />
+                  <span className="muted">-</span>
+                  <input 
+                    type="date" 
+                    value={toDate} 
+                    onChange={(e) => setToDate(e.target.value)}
+                    className="input"
+                    style={{ padding: '6px 10px', fontSize: '14px' }}
+                    placeholder="Bitiş"
+                  />
+                  <button className="btn primary" onClick={fetchStats} style={{ padding: '6px 16px', fontSize: '14px' }}>
+                    Filtrele
+                  </button>
+                  {(fromDate || toDate) && (
+                    <button className="btn ghost" onClick={() => { setFromDate(''); setToDate(''); setTimeout(fetchStats, 100); }} style={{ padding: '6px 12px', fontSize: '14px' }}>
+                      Temizle
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             <div className="inline-muted">Toplam: {total}</div>
           </div>

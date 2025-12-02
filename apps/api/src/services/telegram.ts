@@ -38,3 +38,20 @@ export async function sendMessage(chatId: number, text: string) {
 export async function sendDM(userId: number, text: string) {
   return sendMessage(userId, text);
 }
+
+export async function setMessageReaction(chatId: number, messageId: number, emoji: string = '👍') {
+  const res = await fetch(`${baseUrl()}/setMessageReaction`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      reaction: [{ type: 'emoji', emoji }],
+      is_big: false
+    })
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Telegram setMessageReaction failed: ${res.status} ${body}`);
+  }
+}

@@ -6,7 +6,20 @@ import { me } from '../auth';
 import Header from '../Components/Header';
 import { Modal } from '../Components/Modal';
 
-type Status = 'all' | 'open' | 'resolved' | 'unreachable' | 'reported';
+// Yanıp sönme animasyonu için style
+const blinkStyle = document.createElement('style');
+blinkStyle.textContent = `
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+`;
+if (!document.head.querySelector('style[data-blink]')) {
+  blinkStyle.setAttribute('data-blink', 'true');
+  document.head.appendChild(blinkStyle);
+}
+
+type Status = 'all' | 'open' | 'resolved' | 'unreachable' | 'reported' | 'waiting';
 type Sort = 'newest' | 'oldest';
 type AgentLite = { id: string; name: string; externalUserId: string; isActive: boolean };
 
@@ -21,6 +34,8 @@ function StatusBadge({ status }: { status: Ticket['status'] }) {
         ? 'Ulaşılamadı'
         : status === 'reported'
         ? 'Yazılıma İletildi'
+        : status === 'waiting'
+        ? 'Üye Bekleniyor'
         : ''}
     </span>
   );
@@ -182,7 +197,9 @@ function TicketCard({
   agents,
   onReassign,
   onReport,
-  onNotify,
+  // onNotify,
+  onWaiting,
+  onInterested,
   currentUserId,
   isSuperAgent,
 }: {
@@ -195,7 +212,9 @@ function TicketCard({
   agents: AgentLite[];
   onReassign: (ticketId: string, toAgentId: string) => void;
   onReport: (ticketId: string) => void;
-  onNotify: (ticketId: string) => void;
+  // onNotify: (ticketId: string) => void;
+  onWaiting: (ticketId: string) => void;
+  onInterested: (ticketId: string) => void;
   currentUserId: string;
   isSuperAgent: boolean;
 }) {
@@ -219,6 +238,66 @@ function TicketCard({
     'Bilinmiyor';
   const text = it.telegram?.text || '(Mesaj içeriği yok)';
 
+  // İletişim numarasını mesajdan çıkar
+  function extractContact(text: string) {
+    const lines = text.split(/\r?\n/);
+    for (const line of lines) {
+      const match = line.match(/\b(?:İletişim|İLETİŞİM|iletişim)[\s:]+(.+)$/i);
+      if (match && match[1]) return match[1].trim();
+    }
+    return null;
+  }
+
+  const contactNumber = extractContact(text);
+
+  // İlgilenme süresini hesapla: interestedAt ile çözümlenme zamanı arasındaki fark
+  const [currentTime, setCurrentTime] = useState(Date.now());
+
+  useEffect(() => {
+    // Sadece ticket open durumunda ve ilgilenilmişse sayaç çalışsın
+    if (it.status !== 'open' || !it.interestedBy || !it.interestedAt) return;
+    
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [it.status, it.interestedBy, it.interestedAt]);
+
+  function getInterestedDuration() {
+    if (!it.interestedBy || !it.interestedAt) return null;
+    
+    // Eğer ticket çözümlendiyse, interestedAt ile updatedAt arasındaki fark
+    // Eğer hala açıksa, interestedAt ile şu anki zaman arasındaki fark
+    const endTime = it.status === 'open' 
+      ? currentTime 
+      : (it.updatedAt ? new Date(it.updatedAt).getTime() : currentTime);
+    
+    const diff = endTime - new Date(it.interestedAt).getTime();
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (days > 0) return `${days}g ${hours % 24}s ${minutes % 60}dk`;
+    if (hours > 0) return `${hours}s ${minutes % 60}dk`;
+    if (minutes > 0) return `${minutes}dk ${seconds % 60}sn`;
+    return `${seconds}sn`;
+  }
+
+  const interestedDuration = getInterestedDuration();
+
+  async function handleInterested() {
+    if (contactNumber) {
+      try {
+        await navigator.clipboard.writeText(contactNumber);
+      } catch (e) {
+        console.error('Kopyalama başarısız:', e);
+      }
+    }
+    onInterested(it.id);
+  }
+
   return (
     <div className="ticket">
       <div className={`card ticket-grid status-${it.status}`}>
@@ -239,7 +318,7 @@ function TicketCard({
             </div>
           </div>
 
-          <div style={{ marginBottom: 10 }}>
+          <div style={{ marginBottom: 10, display: 'flex', alignItems: 'baseline', gap: 16 }}>
             <strong style={{ marginRight: 8 }}>Atanan</strong>
             {it.status === 'resolved' || it.status === 'unreachable' || !canReassign ? (
               <div className="assigned-pill">
@@ -255,11 +334,17 @@ function TicketCard({
                 triggerLabel={assignedToName || 'Atanmamış'}
               />
             )}
+                        {interestedDuration && (
+              <div style={{ marginTop: 8, color: 'var(--accent)', fontWeight: 600 }}>
+                ⏱️ İlgilenme süresi: {interestedDuration}
+              </div>
+            )}
           </div>
 
           <div className="msg">
             {highlight(text, query)}
             <div style={{ marginTop: 10, color: 'var(--muted)' }}>Çözüm Metni: {it.resolutionText ? it.resolutionText : 'Yok'}</div>
+
           </div>
 
           {text.length > 180 && (
@@ -284,6 +369,20 @@ function TicketCard({
         </div>
 
         <div className="actions-col">
+          {/* İlgileniyorum butonu - en üstte */}
+          <button 
+            onClick={handleInterested} 
+            className="btn" 
+            disabled={!!it.interestedBy}
+            style={{
+              background: it.interestedBy ? 'var(--background-light)' : 'linear-gradient(90deg,#10b98122,#06b6d433)',
+              cursor: it.interestedBy ? 'not-allowed' : 'pointer'
+            }}
+            title={contactNumber ? `İletişim: ${contactNumber}` : 'İletişim bilgisi bulunamadı'}
+          >
+            {it.interestedBy ? '✅ İlgileniliyor' : '👋 İlgileniyorum'}
+          </button>
+          
           {/* Çözümlendi butonu her durumda aktif kalsın - yeniden mesaj/güncelleme gönderebilsinler */}
           <button onClick={() => onResolve(it)} className="btn primary">
             ✅ Çözümlendi
@@ -296,8 +395,11 @@ function TicketCard({
           <button onClick={() => onReport(it.id)} className="btn" disabled={it.status === 'reported'} style={{background:'linear-gradient(90deg,#7c3aed22,#2563eb11)'}}>
             🛠️ Yazılıma İlet
           </button>
-          <button onClick={() => onNotify(it.id)} className="btn" style={{background:'linear-gradient(90deg,#f9731677,#f43f5e33)'}}>
+          {/* <button onClick={() => onNotify(it.id)} className="btn" style={{background:'linear-gradient(90deg,#f9731677,#f43f5e33)'}}>
             ⚠️ Kullanıcıyı Uyar
+          </button> */}
+          <button onClick={() => onWaiting(it.id)} className="btn" style={{background:'linear-gradient(90deg,#f9731677,#f43f5e33)'}}>
+             ⏳Üye Bekleniy.
           </button>
           {canDelete && (
             <button onClick={() => onDelete(it.id)} className="btn ghost" title="Bu görevi sil">
@@ -355,6 +457,14 @@ export default function Tickets() {
   const [openKapsam, setOpenKapsam] = useState(true);
   const [openAra, setOpenAra] = useState(true);
 
+  // Bildirimler için state'ler (useEffect'lerden önce tanımlanmalı)
+  const [showInitialPopup, setShowInitialPopup] = useState(false);
+  const [reportedCount, setReportedCount] = useState(0);
+  const [waitingCount, setWaitingCount] = useState(0);
+  const [notifications, setNotifications] = useState<Array<{ id: string; type: 'reported' | 'waiting'; time: number }>>([]);
+  const [lastCheckedReported, setLastCheckedReported] = useState<string[]>([]);
+  const [lastCheckedWaiting, setLastCheckedWaiting] = useState<string[]>([]);
+
   // Append agent signature to outgoing messages (not visible in textarea)
   function appendAgentSignature(raw: string) {
     const name = user?.name || 'Agent';
@@ -370,6 +480,76 @@ export default function Tickets() {
       .then(setAgents)
       .catch(() => setAgents([]));
   }, []);
+
+  // İlk girişte reported ve waiting ticket'ları kontrol et
+  useEffect(() => {
+    if (!user) return;
+    const hasShownPopup = sessionStorage.getItem('hasShownInitialPopup');
+    if (hasShownPopup) return;
+
+    // Reported ve waiting ticket'ları çek (sadece bana atananlar)
+    Promise.all([
+      api<{ items: Ticket[] }>('/tickets?status=reported&assignedTo=me'),
+      api<{ items: Ticket[] }>('/tickets?status=waiting&assignedTo=me')
+    ]).then(([reportedRes, waitingRes]) => {
+      const reportedTickets = reportedRes.items || [];
+      const waitingTickets = waitingRes.items || [];
+      
+      setReportedCount(reportedTickets.length);
+      setWaitingCount(waitingTickets.length);
+      
+      if (reportedTickets.length > 0 || waitingTickets.length > 0) {
+        setShowInitialPopup(true);
+        sessionStorage.setItem('hasShownInitialPopup', 'true');
+      }
+      
+      // Son kontrol edilen ticket'ları kaydet
+      setLastCheckedReported(reportedTickets.map(t => t.id));
+      setLastCheckedWaiting(waitingTickets.map(t => t.id));
+    }).catch(() => {});
+  }, [user]);
+
+  // Yeni reported/waiting ticket'ları 1 saat sonra bildir
+  useEffect(() => {
+    if (!user) return;
+    const interval = setInterval(() => {
+      Promise.all([
+        api<{ items: Ticket[] }>('/tickets?status=reported&assignedTo=me'),
+        api<{ items: Ticket[] }>('/tickets?status=waiting&assignedTo=me')
+      ]).then(([reportedRes, waitingRes]) => {
+        const reportedTickets = reportedRes.items || [];
+        const waitingTickets = waitingRes.items || [];
+        
+        // Yeni reported ticket'ları bul
+        const newReported = reportedTickets.filter(t => !lastCheckedReported.includes(t.id));
+        // Yeni waiting ticket'ları bul
+        const newWaiting = waitingTickets.filter(t => !lastCheckedWaiting.includes(t.id));
+        
+        const now = Date.now();
+        const newNotifications: Array<{ id: string; type: 'reported' | 'waiting'; time: number }> = [];
+        
+        newReported.forEach(t => {
+          newNotifications.push({ id: t.id, type: 'reported', time: now });
+        });
+        
+        newWaiting.forEach(t => {
+          newNotifications.push({ id: t.id, type: 'waiting', time: now });
+        });
+        
+        if (newNotifications.length > 0) {
+          setNotifications(prev => [...prev, ...newNotifications]);
+        }
+        
+        setLastCheckedReported(reportedTickets.map(t => t.id));
+        setLastCheckedWaiting(waitingTickets.map(t => t.id));
+        setReportedCount(reportedTickets.length);
+        setWaitingCount(waitingTickets.length);
+      }).catch(() => {});
+    }, 3600000); // 1 saat = 3600000ms
+    
+    return () => clearInterval(interval);
+  }, [lastCheckedReported, lastCheckedWaiting, user]);
+
 function refresh() {
   setRefreshKey(k => k + 1);
 }
@@ -483,10 +663,10 @@ function refresh() {
     refresh();
   }
 
-  // Notify-sender (private DM) modal
-  const [notifyOpen, setNotifyOpen] = useState(false);
-  const [notifyId, setNotifyId] = useState<string | undefined>();
-  const [notifyText, setNotifyText] = useState('Mesajınız hatalı, iletişim alanı zorunludur.');
+  // Waiting (Üye Bekleniyor) modal
+  const [waitingOpen, setWaitingOpen] = useState(false);
+  const [waitingId, setWaitingId] = useState<string | undefined>();
+  const [waitingText, setWaitingText] = useState('Lütfen eksik bilgileri tamamlayınız.');
 
   // Toasts
   const [toasts, setToasts] = useState<Array<{ id: number; text: string; type?: 'success' | 'error' | 'info' }>>([]);
@@ -496,10 +676,10 @@ function refresh() {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4000);
   }
 
-  function openNotifyModal(id: string) {
-    setNotifyId(id);
-    setNotifyText('Mesajınız hatalı, iletişim alanı zorunludur.');
-    setNotifyOpen(true);
+  function openWaitingModal(id: string) {
+    setWaitingId(id);
+    setWaitingText('Lütfen eksik bilgileri tamamlayınız.');
+    setWaitingOpen(true);
   }
 
   // Analysis modal after resolving a ticket
@@ -534,24 +714,50 @@ function refresh() {
     }
   }
 
-  async function submitNotify() {
-    if (!notifyId) return;
-    const raw = notifyText.trim();
+  function openAnalysisModalFor(id: string) {
+    setAnalysisTicketId(id);
+    setAnalysisDifficulty('');
+    setAnalysisNote('');
+    setAnalysisOpen(true);
+  }
+
+  async function submitAnalysis() {
+    if (!analysisTicketId) return;
+    try {
+      await api(`/tickets/${analysisTicketId}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ difficulty: analysisDifficulty || undefined, note: analysisNote }),
+      });
+      setAnalysisOpen(false);
+      setAnalysisTicketId(undefined);
+      setAnalysisDifficulty('');
+      setAnalysisNote('');
+      showToast('Analiz kaydedildi', 'success');
+      refresh();
+    } catch (e) {
+      showToast('Analiz kaydedilemedi', 'error');
+    }
+  }
+
+  async function submitWaiting() {
+    if (!waitingId) return;
+    const raw = waitingText.trim();
     if (!raw) {
       alert('Lütfen mesaj girin.');
       return;
     }
 
     try {
-      await api(`/tickets/${notifyId}/notify-sender`, {
+      await api(`/tickets/${waitingId}/waiting`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: raw }),
       });
-      showToast('Cevap gönderildi', 'success');
-      setNotifyOpen(false);
-      setNotifyId(undefined);
-      setNotifyText('');
+      showToast('Üye bekleniyor durumuna alındı', 'success');
+      setWaitingOpen(false);
+      setWaitingId(undefined);
+      setWaitingText('');
       refresh();
     } catch (e) {
       showToast('Gönderilemedi', 'error');
@@ -623,6 +829,18 @@ function refresh() {
     
   }
 
+  async function onInterested(ticketId: string) {
+    try {
+      await api(`/tickets/${ticketId}/interested`, {
+        method: 'POST',
+      });
+      showToast('İlgileniyorum işaretlendi', 'success');
+      refresh();
+    } catch (e: any) {
+      showToast('İşlem başarısız', 'error');
+    }
+  }
+
   const pages = Math.max(1, Math.ceil(total / 10));
   const deletePermission = isSupervisor;
   // build client-side visible list as a safety-net in case backend doesn't fully filter
@@ -650,6 +868,97 @@ function refresh() {
           </div>
         ))}
       </div>
+      
+      {/* Bildirim badge'leri - sağ üst köşe */}
+      {notifications.length > 0 && (
+        <div style={{
+          position: 'fixed',
+          top: '80px',
+          right: '20px',
+          zIndex: 1000,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '8px'
+        }}>
+          {notifications.filter(n => n.type === 'reported').length > 0 && (
+            <div 
+              className="notification-badge blink"
+              onClick={() => {
+                setStatus('reported');
+                setNotifications(prev => prev.filter(n => n.type !== 'reported'));
+              }}
+              style={{
+                backgroundColor: '#7c3aed',
+                color: 'white',
+                padding: '12px 16px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 700,
+                boxShadow: '0 4px 12px rgba(124, 58, 237, 0.4)',
+                animation: 'blink 1.5s infinite'
+              }}
+            >
+              🛠️ Yazılıma iletilen bir konu bulunmaktadır ({notifications.filter(n => n.type === 'reported').length})
+            </div>
+          )}
+          {notifications.filter(n => n.type === 'waiting').length > 0 && (
+            <div 
+              className="notification-badge blink"
+              onClick={() => {
+                setStatus('waiting');
+                setNotifications(prev => prev.filter(n => n.type !== 'waiting'));
+              }}
+              style={{
+                backgroundColor: '#f97316',
+                color: 'white',
+                padding: '12px 16px',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontWeight: 700,
+                boxShadow: '0 4px 12px rgba(249, 115, 22, 0.4)',
+                animation: 'blink 1.5s infinite'
+              }}
+            >
+              ⏳ Üye bekleniyor durumunda bir konu bulunmaktadır ({notifications.filter(n => n.type === 'waiting').length})
+            </div>
+          )}
+        </div>
+      )}
+      
+      {/* İlk giriş popup'u */}
+      <Modal open={showInitialPopup} title="Bekleyen Konular" onClose={() => setShowInitialPopup(false)}>
+        <div style={{ marginBottom: '16px' }}>
+          {reportedCount > 0 && (
+            <div style={{ 
+              padding: '12px', 
+              backgroundColor: 'rgba(124, 58, 237, 0.1)', 
+              borderRadius: '8px', 
+              marginBottom: '12px',
+              borderLeft: '4px solid #7c3aed'
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: '4px' }}>🛠️ Yazılıma İletilen Konular</div>
+              <div>{reportedCount} adet yazılıma iletilen konu bulunmaktadır.</div>
+            </div>
+          )}
+          {waitingCount > 0 && (
+            <div style={{ 
+              padding: '12px', 
+              backgroundColor: 'rgba(249, 115, 22, 0.1)', 
+              borderRadius: '8px',
+              borderLeft: '4px solid #f97316'
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: '4px' }}>⏳ Üye Bekleniyor</div>
+              <div>{waitingCount} adet üye bekleniyor durumunda konu bulunmaktadır.</div>
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+          <button className="btn btn-secondary" onClick={() => setShowInitialPopup(false)}>
+            Tamam
+          </button>
+        </div>
+      </Modal>
+      
       <div className="container">
         <h3 className="section-title">Görevler</h3>
 
@@ -672,7 +981,7 @@ function refresh() {
               </div>
               <div className="filter-content" style={{ display: openDurum ? 'block' : 'none' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {(['all', 'open', 'resolved', 'unreachable', 'reported'] as Status[]).map((s) => (
+                  {(['all', 'open', 'resolved', 'unreachable', 'reported', 'waiting'] as Status[]).map((s) => (
                     <button
                       key={s}
                       onClick={() => {
@@ -690,7 +999,10 @@ function refresh() {
                         ? 'Çözümlendi'
                         : s === 'reported'
                         ? 'Yazılıma İletildi'
-                        : 'Ulaşılamadı'}
+                        : s === 'waiting'
+                        ? 'Üye Bekleniyor'
+                        : 'Ulaşılamadı'
+                        }
                     </button>
                   ))}
                 </div>
@@ -776,7 +1088,8 @@ function refresh() {
                 agents={agents}
                 onReassign={onReassign}
                 onReport={openReportModal}
-                onNotify={openNotifyModal}
+                onWaiting={openWaitingModal}
+                onInterested={onInterested}
                 currentUserId={user?.id || ''}
                 isSuperAgent={effectiveIsSuperAgent}
               />
@@ -869,7 +1182,8 @@ function refresh() {
                   padding: '0.75rem',
                   borderRadius: '6px',
                   border: '1px solid var(--border-color)',
-                  backgroundColor: 'var(--background)'
+                  backgroundColor: 'var(--background)',
+                  color: 'var(--text)'
                 }}
               />
             </div>
@@ -878,7 +1192,7 @@ function refresh() {
                 display: 'block', 
                 marginBottom: '0.5rem',
                 fontSize: '0.9rem',
-                color: 'var(--text-secondary)'
+                color: 'var(--text)'
               }}>
                 Saat
               </label>
@@ -891,7 +1205,8 @@ function refresh() {
                   padding: '0.75rem',
                   borderRadius: '6px',
                   border: '1px solid var(--border-color)',
-                  backgroundColor: 'var(--background)'
+                  backgroundColor: 'var(--background)',
+                  color: 'var(--text)'
                 }}
               />
             </div>
@@ -940,7 +1255,7 @@ function refresh() {
         </div>
       </Modal>
       {/* Kullanıcıyı Uyar Modal */}
-      <Modal open={notifyOpen} title="Kullanıcıyı Uyar" onClose={() => setNotifyOpen(false)}>
+      {/* <Modal open={notifyOpen} title="Kullanıcıyı Uyar" onClose={() => setNotifyOpen(false)}>
         <div className="muted">Kullanıcıya gönderilecek özel mesajı düzenleyin.</div>
         <textarea value={notifyText} onChange={(e) => setNotifyText(e.target.value)} />
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
@@ -948,6 +1263,20 @@ function refresh() {
             İptal
           </button>
           <button className="btn btn-success" onClick={submitNotify}>
+            Gönder
+          </button>
+        </div>
+      </Modal> */}
+
+      {/* Üye Bekleniyor Modal */}
+      <Modal open={waitingOpen} title="Üye Bekleniyor" onClose={() => setWaitingOpen(false)}>
+        <div className="muted">Kullanıcıya gönderilecek mesajı düzenleyin.</div>
+        <textarea value={waitingText} onChange={(e) => setWaitingText(e.target.value)} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', marginTop: '1rem' }}>
+          <button className="btn btn-secondary" onClick={() => setWaitingOpen(false)}>
+            İptal
+          </button>
+          <button className="btn btn-success" onClick={submitWaiting}>
             Gönder
           </button>
         </div>

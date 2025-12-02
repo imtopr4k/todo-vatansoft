@@ -22,7 +22,7 @@ r.get('/', async (req, res) => {
     limit = Number.isFinite(+limit) && +limit > 0 ? Math.min(100, Math.floor(+limit)) : 10;
     sort = sort === 'oldest' ? 'oldest' : 'newest';
 
-    if (status && !['open', 'resolved', 'unreachable', 'reported'].includes(String(status))) {
+    if (status && !['open', 'resolved', 'unreachable', 'reported', 'waiting'].includes(String(status))) {
       return res.status(400).json({ message: 'Invalid status' });
     }
 
@@ -70,6 +70,9 @@ r.get('/', async (req, res) => {
         : (t.assignedTo ? String(t.assignedTo) : undefined),
       assignedAt: t.assignedAt || t.createdAt,
       resolutionText: t.resolutionText,
+      interestedBy: t.interestedBy ? String(t.interestedBy) : undefined,
+      interestedAt: t.interestedAt,
+      updatedAt: t.updatedAt,
     }));
 
     return res.json({
@@ -156,8 +159,21 @@ r.post('/:id/report', async (req, res) => {
 // Return counts grouped by telegram sender (displayName / username / id)
 r.get('/stats/senders', async (req, res) => {
   try {
+    // Tarih filtresi
+    const { from, to } = req.query as any;
+    const query: any = {};
+    
+    if (from) {
+      const d = new Date(from);
+      if (!isNaN(d.getTime())) query.createdAt = { ...(query.createdAt || {}), $gte: d };
+    }
+    if (to) {
+      const d = new Date(to);
+      if (!isNaN(d.getTime())) query.createdAt = { ...(query.createdAt || {}), $lte: d };
+    }
+    
     // We will aggregate in JS to be tolerant to missing fields and keep logic simple
-    const list = await Ticket.find({}).select('telegram.from telegram.text').lean();
+    const list = await Ticket.find(query).select('telegram.from telegram.text createdAt').lean();
 
     function extractProject(text?: string) {
       if (!text) return null;
@@ -259,7 +275,20 @@ r.get('/stats/senders', async (req, res) => {
 // Return counts grouped by assigned agent: total, resolved, unreachable, open, reported
 r.get('/stats/agents', async (req, res) => {
   try {
-    const list = await Ticket.find({}).select('assignedTo status').populate('assignedTo', 'name externalUserId').lean();
+    // Tarih filtresi
+    const { from, to } = req.query as any;
+    const query: any = {};
+    
+    if (from) {
+      const d = new Date(from);
+      if (!isNaN(d.getTime())) query.createdAt = { ...(query.createdAt || {}), $gte: d };
+    }
+    if (to) {
+      const d = new Date(to);
+      if (!isNaN(d.getTime())) query.createdAt = { ...(query.createdAt || {}), $lte: d };
+    }
+    
+    const list = await Ticket.find(query).select('assignedTo status createdAt').populate('assignedTo', 'name externalUserId').lean();
 
     const map = new Map<string, { id: string; name: string; externalUserId?: string; total: number; open: number; resolved: number; unreachable: number; reported: number }>();
 
@@ -294,6 +323,7 @@ function statusLabel(key?: string) {
     case 'unreachable': return 'Ulaşılamadı';
     case 'open': return 'Açık';
     case 'assigned': return 'Atandı';
+    case 'waiting': return 'Üye Bekleniyor';
     default: return String(key || '').length ? String(key) : '';
   }
 }
@@ -314,7 +344,7 @@ r.put('/:id', async (req, res) => {
 
     // Only allow updating a restricted set of fields
     if (typeof status !== 'undefined') {
-      if (!['open', 'resolved', 'unreachable', 'reported'].includes(String(status))) {
+      if (!['open', 'resolved', 'unreachable', 'reported', 'waiting'].includes(String(status))) {
         return res.status(400).json({ message: 'Invalid status' });
       }
       t.status = String(status) as any;
@@ -592,6 +622,40 @@ r.post('/:id/notify', async (req, res) => {
   }
 });
 
+// POST /tickets/:id/interested
+// Mark ticket as interested (ilgileniyorum)
+r.post('/:id/interested', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const auth = (req as any).auth;
+
+    const t = await Ticket.findById(id);
+    if (!t) return res.status(404).json({ message: 'Not found' });
+    if (auth.role !== 'supervisor' && String(t.assignedTo) !== auth.sub) {
+      return res.status(403).json({ message: 'Not your ticket' });
+    }
+
+    t.interestedBy = auth.sub;
+    t.interestedAt = new Date();
+    await t.save();
+
+    // Telegram mesajına reaction (like) ekle
+    try {
+      if (t.telegram?.chatId && t.telegram?.messageId) {
+        const { setMessageReaction } = await import('../services/telegram');
+        await setMessageReaction(t.telegram.chatId, t.telegram.messageId, '👍');
+      }
+    } catch (e) {
+      // Reaction eklenemese bile işlem başarılı sayılır
+      console.error('Failed to add reaction:', e);
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
 // POST /tickets/:id/notify-sender
 // Send a private DM to the original telegram sender (do NOT reply in group)
 r.post('/:id/notify-sender', async (req, res) => {
@@ -620,6 +684,58 @@ r.post('/:id/notify-sender', async (req, res) => {
       await sendDM(Number(userId), text);
     } catch (e) {
       return res.status(500).json({ message: 'Send failed' });
+    }
+
+    return res.json({ ok: true });
+  } catch (e) {
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
+// POST /tickets/:id/waiting
+// Mark ticket as waiting and send DM to user
+r.post('/:id/waiting', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { message } = req.body as { message?: string };
+    const auth = (req as any).auth;
+
+    const t = await Ticket.findById(id);
+    if (!t) return res.status(404).json({ message: 'Not found' });
+    if (auth.role !== 'supervisor' && String(t.assignedTo) !== auth.sub) {
+      return res.status(403).json({ message: 'Not your ticket' });
+    }
+
+    // Durumu 'waiting' olarak işaretle
+    t.status = 'waiting';
+    await t.save();
+
+    // Kullanıcıya DM gönder
+    const from = (t as any).telegram?.from || {};
+    const userId = from.id || from.telegramUserId || null;
+    
+    if (userId) {
+      const baseMsg = String((message ?? '').trim()) || 'Lütfen eksik bilgileri tamamlayınız.';
+      const original = (t as any).telegram?.text || '(orijinal mesaj yok)';
+      const text = `${baseMsg}\n\nOrijinal mesaj:\n${original}`;
+
+      try {
+        await sendDM(Number(userId), text);
+      } catch (e) {
+        console.error('Failed to send DM:', e);
+      }
+    }
+
+    // Gruba da bildirim gönder
+    try {
+      if (t.telegram?.chatId && t.telegram?.messageId) {
+        const label = statusLabel('waiting');
+        const finalMsg = String((message ?? '').trim()) || 'Üye bekleniyor';
+        const final = `${finalMsg}${label ? '\n\n-' + label : ''}`;
+        await sendReply(t.telegram.chatId, t.telegram.messageId, final);
+      }
+    } catch (e) {
+      console.error('Failed to send group reply:', e);
     }
 
     return res.json({ ok: true });

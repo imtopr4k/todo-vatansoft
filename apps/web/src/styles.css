@@ -13,6 +13,8 @@
   --border: rgba(255,255,255,0.06);
   --radius: 12px;
   --shadow: 0 8px 30px rgba(2,6,23,0.6);
+  --border-color: rgba(133, 125, 125, 0.06);
+  --background: rgba(133, 125, 125, 0.06);
 }
 
 /* Light theme when html doesn't have .dark */

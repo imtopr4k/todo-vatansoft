@@ -10,11 +10,10 @@ export default defineConfig({
         // Origin: use the publicly reachable origin (used by the client to form HMR websocket URL)
         origin: 'http://todo.vatansoft.net',
         hmr: {
+            // protocol: 'ws',
+            // host: 'localhost',
              host: 'todo.vatansoft.net',
-            //  host: 'localhost',
-            port: 5173,
-            //  protocol: 'ws',
-             protocol: 'http',
+              protocol: 'http',
         },
     },
 });

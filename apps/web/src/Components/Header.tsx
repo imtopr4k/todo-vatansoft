@@ -26,7 +26,7 @@ export default function Header() {
 
   const [isActive, setIsActive] = useState<boolean | null>(null);
   const [isSuperUser, setIsSuperUser] = useState(false);
-  const [specialActive, setSpecialActive] = useState<Array<{ id: string; name: string; externalUserId?: string }>>([]);
+  const [allAgents, setAllAgents] = useState<Array<{ id: string; name: string; externalUserId?: string; isActive: boolean }>>([]);
   const [showSpecialView, setShowSpecialView] = useState(false);
   const [adminView, setAdminView] = useState<'agent' | 'temsilci'>(() => (localStorage.getItem('adminViewMode') === 'agents' ? 'agent' : 'temsilci'));
 
@@ -40,25 +40,42 @@ export default function Header() {
         if (meAgent && String(meAgent.externalUserId) === '1') {
           setIsSuperUser(true);
         }
+        
+        // Tüm ajanları kaydet (externalUserId 1 hariç)
+        const filteredAgents = list
+          .filter(a => String(a.externalUserId) !== '1')
+          .map(a => ({ 
+            id: String(a.id), 
+            name: a.name, 
+            externalUserId: String(a.externalUserId),
+            isActive: !!a.isActive
+          }))
+          .sort((a, b) => {
+            // Önce aktif olanlar, sonra pasifler
+            if (a.isActive === b.isActive) {
+              return Number(a.externalUserId) - Number(b.externalUserId);
+            }
+            return a.isActive ? -1 : 1;
+          });
+        
+        if (mounted) setAllAgents(filteredAgents);
+        
         // Only show this special view to users with externalUserId 1 or 1907
         const myExt = meAgent ? String(meAgent.externalUserId) : '';
         const canSee = ['1', '1907'].includes(myExt);
         if (mounted) setShowSpecialView(canSee);
-        if (canSee) {
-          // list active other agents (exclude 1 and 1907 themselves)
-          const others = list
-            .filter(a => !!a.isActive && !['1', '1907'].includes(String(a.externalUserId)))
-            .map(a => ({ id: String(a.id), name: a.name, externalUserId: String(a.externalUserId) }));
-          if (mounted) setSpecialActive(others);
-        } else {
-          if (mounted) setSpecialActive([]);
-        }
       } catch (e) {
+        console.error('Failed to load agents:', e);
       }
     }
     load();
+    
+    // Her 10 saniyede bir güncelle
+    const interval = setInterval(load, 10000);
+    
     return () => {
       mounted = false;
+      clearInterval(interval);
     };
   }, [user?.id]);
 
@@ -84,11 +101,18 @@ export default function Header() {
               <Link to="/admin" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Admin</Link>
             )}
           </nav>
-          {specialActive && specialActive.length > 0 && (
+          {allAgents && allAgents.length > 0 && (
             <div style={{ display: 'flex', gap: 8, marginLeft: 8, alignItems: 'center' }}>
-              {specialActive.map(a => (
-                <div key={a.id} className="assigned-pill" title={`#${a.externalUserId}`} style={{ padding: '6px 10px' }}>
-                  <span className="pill-dot" aria-hidden style={{ marginLeft: -4 }} />
+              {allAgents.map(a => (
+                <div key={a.id} className="assigned-pill" title={`${a.name} (#${a.externalUserId}) - ${a.isActive ? 'Aktif' : 'Pasif'}`} style={{ padding: '6px 10px' }}>
+                  <span 
+                    className="pill-dot" 
+                    aria-hidden 
+                    style={{ 
+                      marginLeft: -4, 
+                      backgroundColor: a.isActive ? '#10b981' : '#6b7280'
+                    }} 
+                  />
                   <span style={{ fontWeight: 700 }}>{a.name || a.externalUserId}</span>
                 </div>
               ))}
