@@ -199,7 +199,7 @@ bot.on('message', async (ctx) => {
     return; // Özel mesajları yok say
   }
 
-  const text = ctx.message?.text || '';
+  const text = ('text' in ctx.message) ? ctx.message.text : '';
   if (!text) return;
 
   // Mesajın gönderenini belirle - bot veya kullanıcı olabilir
@@ -215,11 +215,46 @@ bot.on('message', async (ctx) => {
     textPreview: text.substring(0, 50) 
   });
 
+  // Log kaydet - yardımcı fonksiyon
+  const saveLog = async (level: string, event: string, data: any, message?: string) => {
+    try {
+      await fetch(`${env.API_BASE_URL}/logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          level,
+          event,
+          data,
+          message,
+          chatId: String(ctx.chat?.id),
+          messageId: ctx.message?.message_id,
+          fromId: String(senderId),
+          isBot
+        })
+      });
+    } catch (e) {
+      console.error('[bot] failed to save log', e);
+    }
+  };
+
+  await saveLog('info', 'message_received', {
+    chatType: type,
+    fromId: senderId,
+    isBot,
+    username: ctx.from?.username,
+    textLength: text.length
+  });
+
   // Şablonu çöz
   const data = parseTemplate(text);
   const miss = missingFields(data);
 
   if (miss.length > 0) {
+    await saveLog('warn', 'template_parse_failed', {
+      missingFields: miss,
+      textPreview: text.substring(0, 100)
+    }, 'Şablon eksik alanlar içeriyor');
+
     // Bot mesajları için hata bildirimi gönderme (sadece kullanıcılar için)
     if (isBot) {
       console.log('[bot] skipping error notification for bot message', { fromId: senderId });
@@ -245,10 +280,14 @@ bot.on('message', async (ctx) => {
     return;
   }
 
+  await saveLog('info', 'template_parsed', {
+    parsedData: data
+  }, 'Şablon başarıyla parse edildi');
+
   // Zorunlu alanlar tamam → API'ye ilet
   try {
     console.log('[bot] sending to API intake', { chatId: ctx.chat?.id, messageId: ctx.message?.message_id });
-    await fetch(`${env.API_BASE_URL}/bot/intake`, {
+    const response = await fetch(`${env.API_BASE_URL}/bot/intake`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -263,15 +302,31 @@ bot.on('message', async (ctx) => {
         }
       })
     });
-    console.log('[bot] successfully sent to API intake');
+
+    if (response.ok) {
+      console.log('[bot] successfully sent to API intake');
+      await saveLog('info', 'api_intake_success', {
+        responseStatus: response.status
+      }, 'API intake başarılı');
+    } else {
+      const errorText = await response.text().catch(() => 'unknown error');
+      console.error('[bot] API intake failed', { status: response.status, error: errorText });
+      await saveLog('error', 'api_intake_failed', {
+        responseStatus: response.status,
+        errorText
+      }, 'API intake başarısız');
+    }
   } catch (e) {
     console.error('[bot] failed to send to API intake', e);
+    await saveLog('error', 'api_intake_exception', {
+      error: String(e)
+    }, 'API intake exception');
   }
 });
 
 // Inline butonlar
 bot.on('callback_query', async (ctx) => {
-  const data = String(ctx.callbackQuery?.data || '');
+  const data = ('data' in ctx.callbackQuery) ? String(ctx.callbackQuery.data) : '';
   const [kind, ticketId] = data.split(':');
   await ctx.answerCbQuery();
 });

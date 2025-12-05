@@ -35,7 +35,15 @@ r.post('/login', async (req, res) => {
   await agent.save();
 
   const accessToken = signAccessToken({ sub: agent._id.toString(), role: agent.role as any });
-  res.json({ accessToken, agent: { id: agent._id, role: agent.role, name: agent.name } });
+  res.json({ 
+    accessToken, 
+    agent: { 
+      id: agent._id, 
+      role: agent.role, 
+      name: agent.name,
+      externalUserId: agent.externalUserId 
+    } 
+  });
 });
 
 

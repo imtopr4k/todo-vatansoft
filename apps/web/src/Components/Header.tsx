@@ -105,6 +105,9 @@ export default function Header() {
             {user?.role === 'supervisor' && (
               <Link to="/admin" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Admin</Link>
             )}
+            {showSpecialView && (
+              <Link to="/logs" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Loglar</Link>
+            )}
           </nav>
           {showOnlineUsers && allAgents && allAgents.length > 0 && (
             <div style={{ display: 'flex', gap: 8, marginLeft: 8, alignItems: 'center' }}>

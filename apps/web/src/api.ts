@@ -1,6 +1,6 @@
 const API = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
 
-export async function api<T>(path: string, opts: RequestInit = {}) {
+export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('token');
   const headers: any = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -24,3 +24,8 @@ export async function api<T>(path: string, opts: RequestInit = {}) {
   }
   return res.json() as Promise<T>;
 }
+
+// Helper method for GET requests
+api.get = async function<T>(path: string, opts?: RequestInit): Promise<T> {
+  return api<T>(path, { ...opts, method: 'GET' });
+};

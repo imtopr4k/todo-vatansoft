@@ -8,6 +8,7 @@ import Stats from './pages/Stats';
 import Analysis from './pages/Analysis';
 import AdminUsers from './pages/AdminUsers';
 import Test1907 from './pages/Test1907';
+import Logs from './pages/Logs';
 import { me } from './auth';
 import './styles.css';
 
@@ -33,6 +34,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <Route path="/analysis" element={<RequireAuth><Analysis/></RequireAuth>} />
     <Route path="/admin" element={<RequireSupervisor><AdminUsers/></RequireSupervisor>} />
         <Route path="/test1907" element={<RequireAuth><Test1907/></RequireAuth>} />
+        <Route path="/logs" element={<RequireAuth><Logs/></RequireAuth>} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>

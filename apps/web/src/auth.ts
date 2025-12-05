@@ -1,7 +1,7 @@
 import { api } from './api';
 
 export async function login(externalUserId: string, password: string) {
-  const res = await api<{ accessToken:string; agent:{ id:string; name:string; role:'agent'|'supervisor' } }>(
+  const res = await api<{ accessToken:string; agent:{ id:string; name:string; role:'agent'|'supervisor'; externalUserId:string } }>(
     '/auth/login', { method: 'POST', body: JSON.stringify({ externalUserId, password }) }
   );
   localStorage.setItem('token', res.accessToken);
@@ -11,7 +11,12 @@ export async function login(externalUserId: string, password: string) {
 
 export function me() {
   const raw = localStorage.getItem('me');
-  return raw ? JSON.parse(raw) as { id:string; name:string; role:'agent'|'supervisor'} : null;
+  return raw ? JSON.parse(raw) as { id:string; name:string; role:'agent'|'supervisor'; externalUserId?:string } : null;
+}
+
+export function myExternalUserId(): string | null {
+  const user = me();
+  return user?.externalUserId ? String(user.externalUserId) : null;
 }
 
 export async function heartbeat() {

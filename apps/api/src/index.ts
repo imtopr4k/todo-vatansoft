@@ -9,6 +9,7 @@ import ticketRoutes from './routes/tickets';
 import agentsRouter from './routes/agents';
 import botRoutes from './routes/bot';
 import adminRouter from './routes/admin';
+import logsRouter from './routes/logs';
 import { initScheduler } from './services/scheduler';
 
 (async () => {
@@ -51,6 +52,7 @@ import { initScheduler } from './services/scheduler';
   app.use('/auth', authRoutes);
   app.use('/agents', agentsRouter);
   app.use('/tickets', ticketRoutes);
+  app.use('/logs', logsRouter);
   app.use(express.json());
   app.use('/bot', botRoutes);
   app.get('/debug/db', async (_req, res) => {
