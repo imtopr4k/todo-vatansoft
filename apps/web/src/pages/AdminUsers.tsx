@@ -16,11 +16,17 @@ export default function AdminUsers() {
     setLoading(true);
     try {
       const body = { name, externalUserId, password, role };
-      await api('/auth/register', { method: 'POST', body: JSON.stringify(body) });
-      setMsg('Kullanıcı oluşturuldu');
+      const response = await api('/auth/register', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body) 
+      });
+      setMsg('✅ Kullanıcı başarıyla oluşturuldu');
       setName(''); setExternalUserId(''); setPassword(''); setRole('Agent');
     } catch (err: any) {
-      setMsg(String(err?.message || err));
+      console.error('Register error:', err);
+      const errorMsg = err?.message || err?.error || JSON.stringify(err) || 'Bilinmeyen hata';
+      setMsg('❌ Hata: ' + errorMsg);
     } finally {
       setLoading(false);
     }

@@ -383,22 +383,54 @@ function TicketCard({
             {it.interestedBy ? '✅ İlgileniliyor' : '👋 İlgileniyorum'}
           </button>
           
-          {/* Çözümlendi butonu her durumda aktif kalsın - yeniden mesaj/güncelleme gönderebilsinler */}
-          <button onClick={() => onResolve(it)} className="btn primary">
+          {/* Çözümlendi butonu - sadece ilgilenildikten sonra aktif */}
+          <button 
+            onClick={() => onResolve(it)} 
+            className="btn primary"
+            disabled={!it.interestedBy}
+            style={{
+              cursor: !it.interestedBy ? 'not-allowed' : 'pointer',
+              opacity: !it.interestedBy ? 0.5 : 1
+            }}
+          >
             ✅ Çözümlendi
           </button>
-          {/* Ulaşılamadı butonu sadece açık (open) olanlarda aktif olsun; çözümlendi olanlarda pasif */}
-          <button onClick={() => onUnreachable(it.id)} disabled={it.status !== 'open'} className="btn danger">
+          {/* Ulaşılamadı butonu - sadece ilgilenildikten sonra ve açık olanlarda aktif */}
+          <button 
+            onClick={() => onUnreachable(it.id)} 
+            disabled={!it.interestedBy || it.status !== 'open'} 
+            className="btn danger"
+            style={{
+              cursor: !it.interestedBy || it.status !== 'open' ? 'not-allowed' : 'pointer',
+              opacity: !it.interestedBy || it.status !== 'open' ? 0.5 : 1
+            }}
+          >
             🚫 Ulaşılamadı
           </button>
-          {/* Yazılıma ilet butonu */}
-          <button onClick={() => onReport(it.id)} className="btn" disabled={it.status === 'reported'} style={{background:'linear-gradient(90deg,#7c3aed22,#2563eb11)'}}>
+          {/* Yazılıma ilet butonu - sadece ilgilenildikten sonra aktif */}
+          <button 
+            onClick={() => onReport(it.id)} 
+            className="btn" 
+            disabled={!it.interestedBy || it.status === 'reported'} 
+            style={{
+              background:'linear-gradient(90deg,#7c3aed22,#2563eb11)',
+              cursor: !it.interestedBy || it.status === 'reported' ? 'not-allowed' : 'pointer',
+              opacity: !it.interestedBy || it.status === 'reported' ? 0.5 : 1
+            }}
+          >
             🛠️ Yazılıma İlet
           </button>
-          {/* <button onClick={() => onNotify(it.id)} className="btn" style={{background:'linear-gradient(90deg,#f9731677,#f43f5e33)'}}>
-            ⚠️ Kullanıcıyı Uyar
-          </button> */}
-          <button onClick={() => onWaiting(it.id)} className="btn" style={{background:'linear-gradient(90deg,#f9731677,#f43f5e33)'}}>
+          {/* Üye Bekleniyor butonu - sadece ilgilenildikten sonra aktif */}
+          <button 
+            onClick={() => onWaiting(it.id)} 
+            className="btn" 
+            disabled={!it.interestedBy}
+            style={{
+              background:'linear-gradient(90deg,#f9731677,#f43f5e33)',
+              cursor: !it.interestedBy ? 'not-allowed' : 'pointer',
+              opacity: !it.interestedBy ? 0.5 : 1
+            }}
+          >
              ⏳Üye Bekleniy.
           </button>
           {canDelete && (
@@ -566,10 +598,70 @@ export default function Tickets() {
           setLastTotalCount(res.total);
         })
         .catch(() => {});
-    }, 10000); // 10 saniye
+    }, 60000); // 60 saniye
     
     return () => clearInterval(interval);
   }, [lastTotalCount, user]);
+
+  // 1 saatten eski reported/waiting ticket'ları kontrol et
+  useEffect(() => {
+    if (!user) return;
+    
+    const checkOldTickets = () => {
+      Promise.all([
+        api<{ items: Ticket[] }>('/tickets?status=reported&assignedTo=me'),
+        api<{ items: Ticket[] }>('/tickets?status=waiting&assignedTo=me')
+      ]).then(([reportedRes, waitingRes]) => {
+        const reportedTickets = reportedRes.items || [];
+        const waitingTickets = waitingRes.items || [];
+        
+        const now = Date.now();
+        const oneHourAgo = now - 3600000; // 1 saat önce
+        
+        // 1 saatten eski reported ticket'ları bul
+        const oldReported = reportedTickets.filter(t => {
+          const ticketTime = t.updatedAt ? new Date(t.updatedAt).getTime() : 
+                            t.assignedAt ? new Date(t.assignedAt).getTime() : now;
+          return ticketTime < oneHourAgo;
+        });
+        
+        // 1 saatten eski waiting ticket'ları bul
+        const oldWaiting = waitingTickets.filter(t => {
+          const ticketTime = t.updatedAt ? new Date(t.updatedAt).getTime() : 
+                            t.assignedAt ? new Date(t.assignedAt).getTime() : now;
+          return ticketTime < oneHourAgo;
+        });
+        
+        setNotifications(prev => {
+          const oldNotifications: Array<{ id: string; type: 'reported' | 'waiting'; time: number }> = [];
+          
+          oldReported.forEach(t => {
+            // Sadece daha önce bildirim gönderilmemiş olanları ekle
+            if (!prev.find(n => n.id === t.id && n.type === 'reported')) {
+              oldNotifications.push({ id: t.id, type: 'reported', time: now });
+            }
+          });
+          
+          oldWaiting.forEach(t => {
+            // Sadece daha önce bildirim gönderilmemiş olanları ekle
+            if (!prev.find(n => n.id === t.id && n.type === 'waiting')) {
+              oldNotifications.push({ id: t.id, type: 'waiting', time: now });
+            }
+          });
+          
+          return oldNotifications.length > 0 ? [...prev, ...oldNotifications] : prev;
+        });
+      }).catch(() => {});
+    };
+    
+    // İlk yüklemede kontrol et
+    checkOldTickets();
+    
+    // Her 5 dakikada bir kontrol et
+    const interval = setInterval(checkOldTickets, 300000); // 5 dakika = 300000ms
+    
+    return () => clearInterval(interval);
+  }, [user]);
 
 function refresh() {
   setRefreshKey(k => k + 1);
@@ -919,7 +1011,7 @@ function refresh() {
                 animation: 'blink 1.5s infinite'
               }}
             >
-              🛠️ Yazılıma iletilen bir konu bulunmaktadır ({notifications.filter(n => n.type === 'reported').length})
+              🛠️ Yazılıma iletilmiş {notifications.filter(n => n.type === 'reported').length} konu var
             </div>
           )}
           {notifications.filter(n => n.type === 'waiting').length > 0 && (
@@ -940,7 +1032,7 @@ function refresh() {
                 animation: 'blink 1.5s infinite'
               }}
             >
-              ⏳ Üye bekleniyor durumunda bir konu bulunmaktadır ({notifications.filter(n => n.type === 'waiting').length})
+              ⏳ Üye bekleyen {notifications.filter(n => n.type === 'waiting').length} konu var
             </div>
           )}
         </div>

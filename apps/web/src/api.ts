@@ -11,6 +11,16 @@ export async function api<T>(path: string, opts: RequestInit = {}) {
   }
 
   const res = await fetch(`${API}${path}`, { ...opts, headers });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    const text = await res.text();
+    let errorMsg = text;
+    try {
+      const json = JSON.parse(text);
+      errorMsg = json.message || json.error || text;
+    } catch (e) {
+      // text is not JSON, use as-is
+    }
+    throw new Error(errorMsg);
+  }
   return res.json() as Promise<T>;
 }

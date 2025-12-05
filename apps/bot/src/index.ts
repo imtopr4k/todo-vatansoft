@@ -34,8 +34,8 @@ function pick(text: string | undefined, labels: string | string[]): string | und
 
 function parseTemplate(text?: string): Parsed {
   return {
-    id: pick(text, 'id |ID |Id'),
-    iletisim: pick(text, 'İletisim|iletisim|iletişim|telefon|wp|whatsapp|İletişim'),
+    id: pick(text, 'id |ID |Id|Üye No|uye no|'),
+    iletisim: pick(text, 'İletisim|iletisim|iletişim|telefon|wp|whatsapp|İletişim|ıletişim|ıletısım'),
     detay: pick(text, 'detay'),
     proje: pick(text, 'proje'),
     ekstra: pick(text, 'ekstra|isim|not'),
@@ -44,8 +44,8 @@ function parseTemplate(text?: string): Parsed {
 
 function missingFields(p: Parsed): string[] {
   const miss: string[] = [];
-  if (!p.id) miss.push('id |ID |Id');
-  if (!p.iletisim) miss.push('İletisim|iletisim|iletişim|telefon|wp|whatsapp|İletişim');
+  if (!p.id) miss.push('id |ID |Id|Üye No|uye no|');
+  if (!p.iletisim) miss.push('İletisim');
   if (!p.detay) miss.push('detay');
   return miss;
 }
