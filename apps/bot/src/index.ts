@@ -177,29 +177,42 @@ bot.on('message', async (ctx) => {
   // Sadece group/supergroup
   const type = ctx.chat?.type;
   if (type !== 'group' && type !== 'supergroup') {
-    // İstersen tamamen sessiz kal:
-    // return;
-    // veya nazikçe:
-    // return ctx.reply('Lütfen grupta şablona göre yazın. Özel mesajlar işlenmiyor.');
-    return; // tamamen yok sayıyoruz
+    return; // Özel mesajları yok say
   }
 
   const text = ctx.message?.text || '';
   if (!text) return;
+
+  // Mesajın gönderenini belirle - bot veya kullanıcı olabilir
+  const senderId = ctx.from?.id;
+  const isBot = ctx.from?.is_bot || false;
+  
+  // Bot mesajlarını da işle (başka bottan gelen talepler için)
+  console.log('[bot] message received', { 
+    chatType: type, 
+    fromId: senderId, 
+    isBot, 
+    username: ctx.from?.username,
+    textPreview: text.substring(0, 50) 
+  });
 
   // Şablonu çöz
   const data = parseTemplate(text);
   const miss = missingFields(data);
 
   if (miss.length > 0) {
-    // Grup yerine kullanıcının özel mesajına (DM) bildir. Eğer DM başarısız olursa
-    // sessizce logla; kullanıcıya grup üzerinden tekrar bildirim göndermiyoruz.
+    // Bot mesajları için hata bildirimi gönderme (sadece kullanıcılar için)
+    if (isBot) {
+      console.log('[bot] skipping error notification for bot message', { fromId: senderId });
+      return;
+    }
+
+    // Kullanıcıya özel mesajla bildir
     const userId = ctx.from?.id;
     const notifyText = miss.includes('id |ID |Id')
       ? 'id alanı zorunludur'
       : `Eksik alan(lar): ${miss.join(', ')}. Lütfen "id / iletisim / detay" alanlarını doldurun.`;
 
-    // Include the original message in the DM so the user sees what was wrong
     const original = text || '(orijinal mesaj yok)';
     const finalDM = `${notifyText}\n\nOrijinal mesaj:\n${original}`;
 
@@ -207,17 +220,15 @@ bot.on('message', async (ctx) => {
       try {
         await ctx.telegram.sendMessage(userId, finalDM);
       } catch (e) {
-        // Bilerek grup içinde cevap vermiyoruz — opsiyonel: burada bir log/telemetry eklenebilir.
+        console.warn('[bot] failed to send error DM', e);
       }
-    } else {
     }
     return;
   }
 
-  // Zorunlu alanlar tamam → API'ye ilet (burada HENÜZ atama yapma niyetini değiştirmediysen,
-  // mevcut intake rotanı çağırmaya devam edebilirsin; sen "dağıtım yapmayacak" dediysen
-  // sadece kayıt/loglamak istiyorsan, ilgili API'ye karar ver)
+  // Zorunlu alanlar tamam → API'ye ilet
   try {
+    console.log('[bot] sending to API intake', { chatId: ctx.chat?.id, messageId: ctx.message?.message_id });
     await fetch(`${env.API_BASE_URL}/bot/intake`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -233,10 +244,9 @@ bot.on('message', async (ctx) => {
         }
       })
     });
-    // Not: Atama ve “Görev X’e atandı” mesajı API tarafında zaten reply olarak atılıyorsa
-    // burada ayrıca bir mesaj göndermiyoruz.
+    console.log('[bot] successfully sent to API intake');
   } catch (e) {
-    // sessiz geçebilir veya hata loglayabilirsin
+    console.error('[bot] failed to send to API intake', e);
   }
 });
 
