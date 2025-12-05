@@ -33,10 +33,29 @@ function pick(text: string | undefined, labels: string | string[]): string | und
 }
 
 function parseTemplate(text?: string): Parsed {
+  // Önce ILKSMS formatını kontrol et
+  const uyeNoMatch = text?.match(/Üye\s+No\s*[:\-]?\s*(\d+)/i);
+  const telefonMatch = text?.match(/Telefon\s*[:\-]?\s*([\d\s]+)/i);
+  const konuMatch = text?.match(/Konu\s*[:\-]?\s*(.+)/i);
+  const detayMatch = text?.match(/Detay\s*[:\-]?\s*(.+?)(?=\n-|$)/is);
+  
+  // ILKSMS formatı tespit edilirse, özel parse yap
+  if (uyeNoMatch || (telefonMatch && konuMatch)) {
+    return {
+      id: uyeNoMatch?.[1]?.trim(),
+      iletisim: telefonMatch?.[1]?.trim().replace(/\s/g, ''), // Boşlukları kaldır
+      detay: (detayMatch?.[1] || konuMatch?.[1])?.trim(),
+      proje: undefined,
+      ekstra: undefined,
+      isim: undefined
+    };
+  }
+  
+  // Standart formatı parse et
   return {
-    id: pick(text, 'id |ID |Id|Üye No|uye no|'),
+    id: pick(text, 'id |ID |Id|Üye No|uye no|Üye No'),
     iletisim: pick(text, 'İletisim|iletisim|iletişim|telefon|wp|whatsapp|İletişim|ıletişim|ıletısım|Telefon'),
-    detay: pick(text, 'detay'),
+    detay: pick(text, 'detay|Detay|Konu'),
     proje: pick(text, 'proje'),
     ekstra: pick(text, 'ekstra|isim|not'),
   };
