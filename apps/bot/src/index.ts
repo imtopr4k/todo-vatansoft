@@ -35,7 +35,7 @@ function pick(text: string | undefined, labels: string | string[]): string | und
 function parseTemplate(text?: string): Parsed {
   return {
     id: pick(text, 'id |ID |Id|Üye No|uye no|'),
-    iletisim: pick(text, 'İletisim|iletisim|iletişim|telefon|wp|whatsapp|İletişim|ıletişim|ıletısım'),
+    iletisim: pick(text, 'İletisim|iletisim|iletişim|telefon|wp|whatsapp|İletişim|ıletişim|ıletısım|Telefon'),
     detay: pick(text, 'detay'),
     proje: pick(text, 'proje'),
     ekstra: pick(text, 'ekstra|isim|not'),
@@ -79,6 +79,99 @@ bot.start(async (ctx) => {
 });
 
 
+// KOMUTLAR VE ÖZEL KELİMELER - mesaj handler'ından ÖNCE tanımlanmalı
+
+// /myid command - send user's Telegram id
+bot.command('myid', async (ctx) => {
+  const userId = ctx.from?.id;
+  console.log('[bot] /myid invoked', { chatType: ctx.chat?.type, fromId: ctx.from?.id, username: ctx.from?.username });
+  if (!userId) {
+    try { await ctx.reply("Kullanıcı id bulunamadı."); } catch (e) { console.warn('[bot] could not reply missing id', e); }
+    return;
+  }
+
+  // If in private chat, reply directly with plain id (RawDataBot-style)
+  if (ctx.chat?.type === 'private') {
+    try {
+      await ctx.reply(String(userId));
+    } catch (e) {
+      console.warn('[bot] failed to reply in private', e);
+    }
+    return;
+  }
+
+  // In group - try to DM the user and acknowledge in group
+  try {
+    await ctx.telegram.sendMessage(userId, String(userId));
+    // short group acknowledgement
+    await ctx.reply('Telegram id bilgisi özelden gönderildi.');
+  } catch (e) {
+    console.warn('[bot] failed to DM user for /myid', e);
+    try { await ctx.reply(String(userId)); } catch (ex) { console.warn('[bot] failed to reply in group fallback', ex); }
+  }
+});
+
+// /id command
+bot.command('id', async (ctx) => {
+  console.log('[bot] /id invoked', { chatType: ctx.chat?.type, fromId: ctx.from?.id });
+  const userId = ctx.from?.id;
+  if (!userId) {
+    try { await ctx.reply("Kullanıcı id bulunamadı."); } catch (e) { console.warn('[bot] could not reply missing id', e); }
+    return;
+  }
+
+  if (ctx.chat?.type === 'private') {
+    try {
+      await ctx.reply(String(userId));
+      await ctx.reply(`/start aid-${String(userId)}`);
+    } catch (e) {
+      console.warn('[bot] failed to reply in private /id', e);
+    }
+    return;
+  }
+
+  try {
+    await ctx.telegram.sendMessage(userId, String(userId));
+    await ctx.telegram.sendMessage(userId, `/start aid-${String(userId)}`);
+    await ctx.reply('Telegram id bilgisi özelden gönderildi.');
+  } catch (e) {
+    console.warn('[bot] failed to DM user for /id', e);
+    try { await ctx.reply(String(userId)); } catch (ex) { console.warn('[bot] failed to reply in group fallback', ex); }
+  }
+});
+
+// 'id' yazıldığında
+bot.hears(/^\s*id\s*$/i, async (ctx) => {
+  console.log('[bot] hears id', { chatType: ctx.chat?.type, fromId: ctx.from?.id });
+  const userId = ctx.from?.id;
+  if (!userId) return;
+
+  // Özel sohbette direkt yanıtla
+  if (ctx.chat?.type === 'private') {
+    try {
+      await ctx.reply(String(userId));
+      await ctx.reply(`/start aid-${String(userId)}`);
+    } catch (e) {
+      console.warn('[bot] failed to reply to private id request', e);
+    }
+    return;
+  }
+
+  // Grup içindeyse DM atmayı dene, başarısız olursa grup içinde yanıt ver
+  try {
+    await ctx.telegram.sendMessage(userId, String(userId));
+    await ctx.telegram.sendMessage(userId, `/start aid-${String(userId)}`);
+    await ctx.reply('Telegram id bilgisi özelden gönderildi.');
+  } catch (e) {
+    console.warn('[bot] failed to DM user for hears id', e);
+    try {
+      await ctx.reply(String(userId));
+    } catch (ex) {
+      console.warn('[bot] failed to reply in group fallback', ex);
+    }
+  }
+});
+
 // Grup mesajlarını dinle (Privacy Mode OFF olmalı)
 bot.on('message', async (ctx) => {
   // Sadece group/supergroup
@@ -93,12 +186,6 @@ bot.on('message', async (ctx) => {
 
   const text = ctx.message?.text || '';
   if (!text) return;
-
-  // Komutları ve özel kelimeleri filtrele - bunları şablon olarak işleme
-  const lowerText = text.trim().toLowerCase();
-  if (lowerText.startsWith('/') || lowerText === 'myid' || lowerText === 'id') {
-    return; // Komutları ve özel kelimeleri atla
-  }
 
   // Şablonu çöz
   const data = parseTemplate(text);
@@ -158,101 +245,6 @@ bot.on('callback_query', async (ctx) => {
   const data = String(ctx.callbackQuery?.data || '');
   const [kind, ticketId] = data.split(':');
   await ctx.answerCbQuery();
-});
-
-// /myid command - send user's Telegram id
-bot.command('myid', async (ctx) => {
-  const userId = ctx.from?.id;
-  console.log('[bot] /myid invoked', { chatType: ctx.chat?.type, fromId: ctx.from?.id, username: ctx.from?.username });
-  if (!userId) {
-    try { await ctx.reply("Kullanıcı id bulunamadı."); } catch (e) { console.warn('[bot] could not reply missing id', e); }
-    return;
-  }
-
-  // If in private chat, reply directly with plain id (RawDataBot-style)
-  if (ctx.chat?.type === 'private') {
-    try {
-      await ctx.reply(String(userId));
-    } catch (e) {
-      console.warn('[bot] failed to reply in private', e);
-    }
-    return;
-  }
-
-  // In group - try to DM the user and acknowledge in group
-  try {
-  await ctx.telegram.sendMessage(userId, String(userId));
-    // short group acknowledgement
-    await ctx.reply('Telegram id bilgisi özelden gönderildi.');
-  } catch (e) {
-    console.warn('[bot] failed to DM user for /myid', e);
-    try { await ctx.reply(String(userId)); } catch (ex) { console.warn('[bot] failed to reply in group fallback', ex); }
-  }
-});
-
-// Private veya grup içinde 'id' yazılınca daha güvenilir yanıt ver (log + toleranslı regex).
-async function sendIdToUser(userId: number | undefined) {
-  if (!userId) return;
-}
-
-bot.hears(/^\s*id\s*$/i, async (ctx) => {
-  console.log('[bot] hears id', { chatType: ctx.chat?.type, fromId: ctx.from?.id });
-  const userId = ctx.from?.id;
-  if (!userId) return;
-
-  // Özel sohbette direkt yanıtla
-  if (ctx.chat?.type === 'private') {
-    try {
-      await ctx.reply(String(userId));
-      await ctx.reply(`/start aid-${String(userId)}`);
-    } catch (e) {
-      console.warn('[bot] failed to reply to private id request', e);
-    }
-    return;
-  }
-
-  // Grup içindeyse DM atmayı dene, başarısız olursa grup içinde yanıt ver
-  try {
-    await ctx.telegram.sendMessage(userId, String(userId));
-    await ctx.telegram.sendMessage(userId, `/start aid-${String(userId)}`);
-    await ctx.reply('Telegram id bilgisi özelden gönderildi.');
-  } catch (e) {
-    console.warn('[bot] failed to DM user for hears id', e);
-    try {
-      await ctx.reply(String(userId));
-    } catch (ex) {
-      console.warn('[bot] failed to reply in group fallback', ex);
-    }
-  }
-});
-
-// Ayrıca '/id' komutu destekle
-bot.command('id', async (ctx) => {
-  console.log('[bot] /id invoked', { chatType: ctx.chat?.type, fromId: ctx.from?.id });
-  const userId = ctx.from?.id;
-  if (!userId) {
-    try { await ctx.reply("Kullanıcı id bulunamadı."); } catch (e) { console.warn('[bot] could not reply missing id', e); }
-    return;
-  }
-
-  if (ctx.chat?.type === 'private') {
-    try {
-      await ctx.reply(String(userId));
-      await ctx.reply(`/start aid-${String(userId)}`);
-    } catch (e) {
-      console.warn('[bot] failed to reply in private /id', e);
-    }
-    return;
-  }
-
-  try {
-    await ctx.telegram.sendMessage(userId, String(userId));
-    await ctx.telegram.sendMessage(userId, `/start aid-${String(userId)}`);
-    await ctx.reply('Telegram id bilgisi özelden gönderildi.');
-  } catch (e) {
-    console.warn('[bot] failed to DM user for /id', e);
-    try { await ctx.reply(String(userId)); } catch (ex) { console.warn('[bot] failed to reply in group fallback', ex); }
-  }
 });
 
 bot.launch().then(() => console.log('[bot] started'));
