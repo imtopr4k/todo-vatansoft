@@ -94,6 +94,12 @@ bot.on('message', async (ctx) => {
   const text = ctx.message?.text || '';
   if (!text) return;
 
+  // Komutları ve özel kelimeleri filtrele - bunları şablon olarak işleme
+  const lowerText = text.trim().toLowerCase();
+  if (lowerText.startsWith('/') || lowerText === 'myid' || lowerText === 'id') {
+    return; // Komutları ve özel kelimeleri atla
+  }
+
   // Şablonu çöz
   const data = parseTemplate(text);
   const miss = missingFields(data);
