@@ -438,7 +438,7 @@ export default function Chat() {
                     </h3>
                     {selectedUser?.firstName && (
                       <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--muted)' }}>
-                        @{selectedUser.firstName}
+                        @{selectedUser.userName}
                       </p>
                     )}
                   </div>
