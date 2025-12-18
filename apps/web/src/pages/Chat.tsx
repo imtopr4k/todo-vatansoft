@@ -430,7 +430,7 @@ export default function Chat() {
                     fontWeight: '700',
                     fontSize: '14px'
                   }}>
-                    {selectedUser?.userName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                    {selectedUser?.firstName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
                   </div>
                   <div>
                     <h3 style={{ margin: '0', fontSize: '16px', fontWeight: '700', color: 'var(--text)' }}>
