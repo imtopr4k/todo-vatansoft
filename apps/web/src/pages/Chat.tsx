@@ -434,11 +434,11 @@ export default function Chat() {
                   </div>
                   <div>
                     <h3 style={{ margin: '0', fontSize: '16px', fontWeight: '700', color: 'var(--text)' }}>
-                      {selectedUser?.userName}
+                      {selectedUser?.firstName} {selectedUser?.lastName}
                     </h3>
-                    {selectedUser?.username && (
+                    {selectedUser?.firstName && (
                       <p style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--muted)' }}>
-                        @{selectedUser.username}
+                        @{selectedUser.firstName}
                       </p>
                     )}
                   </div>
