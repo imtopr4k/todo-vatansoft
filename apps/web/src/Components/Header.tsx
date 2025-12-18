@@ -100,6 +100,7 @@ export default function Header() {
           <div className="brand">TELEGRAMTODO</div>
           <nav style={{ display: 'flex', gap: 8 }}>
             <Link to="/tickets" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Görevler</Link>
+            <Link to="/chat" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Sohbet</Link>
             <Link to="/stats" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>İstatistik</Link>
             <Link to="/analysis" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Analiz</Link>
             {user?.role === 'supervisor' && (

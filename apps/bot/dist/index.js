@@ -1,0 +1,450 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const telegraf_1 = require("telegraf");
+const env_1 = require("./env");
+const apiClient_1 = require("./apiClient");
+console.log('[bot] Imports loaded');
+console.log('[bot] BOT_TOKEN:', env_1.env.BOT_TOKEN ? 'Available' : 'MISSING!');
+console.log('[bot] API_BASE_URL:', env_1.env.API_BASE_URL);
+const bot = new telegraf_1.Telegraf(env_1.env.BOT_TOKEN);
+console.log('[bot] Telegraf instance created');
+function pick(text, labels) {
+    if (!text)
+        return;
+    const list = Array.isArray(labels) ? labels : labels.split('|');
+    // Örn: ^\s*(iletişim|iletisim|telefon|wp|whatsapp)\s*[.:：\-]?\s*(.+)$
+    const pattern = `^\\s*(?:${list.join('|')})\\s*[\\.:：\\-]?\\s*(.+)$`;
+    const re = new RegExp(pattern, 'gmiu'); // g,m,i,**u (Unicode)**
+    let match;
+    // Satır satır tara (çok satırlı metinlerde güvenli)
+    const lines = text.split(/\r?\n/);
+    for (const line of lines) {
+        re.lastIndex = 0;
+        match = re.exec(line);
+        if (match?.[1])
+            return match[1].trim();
+    }
+    return;
+}
+function parseTemplate(text) {
+    // Önce ILKSMS formatını kontrol et
+    const uyeNoMatch = text?.match(/Üye\s+No\s*[:\-]?\s*(\d+)/i);
+    const telefonMatch = text?.match(/Telefon\s*[:\-]?\s*([\d\s]+)/i);
+    const konuMatch = text?.match(/Konu\s*[:\-]?\s*(.+)/i);
+    const detayMatch = text?.match(/Detay\s*[:\-]?\s*(.+?)(?=\n-|$)/is);
+    // ILKSMS formatı tespit edilirse, özel parse yap
+    if (uyeNoMatch || (telefonMatch && konuMatch)) {
+        return {
+            id: uyeNoMatch?.[1]?.trim(),
+            iletisim: telefonMatch?.[1]?.trim().replace(/\s/g, ''), // Boşlukları kaldır
+            detay: (detayMatch?.[1] || konuMatch?.[1])?.trim(),
+            proje: undefined,
+            ekstra: undefined,
+            isim: undefined
+        };
+    }
+    // Standart formatı parse et
+    return {
+        id: pick(text, 'id |ID |Id|Üye No|uye no|Üye No'),
+        iletisim: pick(text, 'İletisim|iletisim|iletişim|telefon|wp|whatsapp|İletişim|ıletişim|ıletısım|Telefon'),
+        detay: pick(text, 'detay|Detay|Konu'),
+        proje: pick(text, 'proje'),
+        ekstra: pick(text, 'ekstra|isim|not'),
+    };
+}
+function missingFields(p) {
+    const miss = [];
+    if (!p.id)
+        miss.push('id |ID |Id|Uye No|uye no|');
+    if (!p.iletisim)
+        miss.push('Iletisim');
+    if (!p.detay)
+        miss.push('detay');
+    return miss;
+}
+// /start - hem agent eşleştirme hem kullanıcı chat kaydı
+console.log('[bot] Registering /start handler');
+bot.start(async (ctx) => {
+    if (ctx.chat?.type !== 'private')
+        return;
+    const payloadRaw = (ctx.startPayload ?? '').trim();
+    const chatId = ctx.chat.id;
+    const userId = ctx.from?.id;
+    const firstName = ctx.from?.first_name;
+    const lastName = ctx.from?.last_name;
+    const username = ctx.from?.username;
+    // aid-xxxxx veya aid_xxxxx -> Agent eşleştirme
+    const m = payloadRaw.match(/^aid[-_](.+)$/i);
+    if (m) {
+        const agentId = m[1];
+        const telegramUserId = String(userId);
+        try {
+            const res = await fetch(`${env_1.env.API_BASE_URL}/bot/link`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ agentId, telegramUserId })
+            });
+            if (!res.ok)
+                throw new Error(await res.text());
+            return ctx.reply('✅ Eşleştirme başarılı! Artık görev bildirimleri için hazırsın.');
+        }
+        catch (e) {
+            return ctx.reply('❌ Eşleştirme başarısız: ' + (e?.message || 'hata'));
+        }
+    }
+    // Payload yok veya agent ID değil -> Kullanıcı kaydı (chat sistemi için)
+    try {
+        await (0, apiClient_1.registerUserChatId)({
+            userId: userId,
+            chatId,
+            firstName,
+            lastName,
+            username
+        });
+        return ctx.reply('✅ Merhaba! Destek talepleriniz için kayıt oldunuz. Artık destek ekibimiz sizinle buradan iletişime geçebilir.');
+    }
+    catch (e) {
+        console.error('[bot] /start user registration failed', e);
+        return ctx.reply('Kayıt sırasında bir hata oluştu. Lütfen daha sonra tekrar deneyin.');
+    }
+});
+// KOMUTLAR VE ÖZEL KELİMELER - mesaj handler'ından ÖNCE tanımlanmalı
+// /myid command - send user's Telegram id
+console.log('[bot] Registering /myid command');
+bot.command('myid', async (ctx) => {
+    const userId = ctx.from?.id;
+    console.log('[bot] /myid invoked', { chatType: ctx.chat?.type, fromId: ctx.from?.id, username: ctx.from?.username });
+    if (!userId) {
+        try {
+            await ctx.reply("Kullanıcı id bulunamadı.");
+        }
+        catch (e) {
+            console.warn('[bot] could not reply missing id', e);
+        }
+        return;
+    }
+    // If in private chat, reply directly with plain id (RawDataBot-style)
+    if (ctx.chat?.type === 'private') {
+        try {
+            await ctx.reply(String(userId));
+        }
+        catch (e) {
+            console.warn('[bot] failed to reply in private', e);
+        }
+        return;
+    }
+    // In group - try to DM the user and acknowledge in group
+    try {
+        await ctx.telegram.sendMessage(userId, String(userId));
+        // short group acknowledgement
+        await ctx.reply('Telegram id bilgisi özelden gönderildi.');
+    }
+    catch (e) {
+        console.warn('[bot] failed to DM user for /myid', e);
+        try {
+            await ctx.reply(String(userId));
+        }
+        catch (ex) {
+            console.warn('[bot] failed to reply in group fallback', ex);
+        }
+    }
+});
+// /id command
+console.log('[bot] Registering /id command');
+bot.command('id', async (ctx) => {
+    console.log('[bot] /id invoked', { chatType: ctx.chat?.type, fromId: ctx.from?.id });
+    const userId = ctx.from?.id;
+    if (!userId) {
+        try {
+            await ctx.reply("Kullanıcı id bulunamadı.");
+        }
+        catch (e) {
+            console.warn('[bot] could not reply missing id', e);
+        }
+        return;
+    }
+    if (ctx.chat?.type === 'private') {
+        try {
+            await ctx.reply(String(userId));
+            await ctx.reply(`/start aid-${String(userId)}`);
+        }
+        catch (e) {
+            console.warn('[bot] failed to reply in private /id', e);
+        }
+        return;
+    }
+    try {
+        await ctx.telegram.sendMessage(userId, String(userId));
+        await ctx.telegram.sendMessage(userId, `/start aid-${String(userId)}`);
+        await ctx.reply('Telegram id bilgisi özelden gönderildi.');
+    }
+    catch (e) {
+        console.warn('[bot] failed to DM user for /id', e);
+        try {
+            await ctx.reply(String(userId));
+        }
+        catch (ex) {
+            console.warn('[bot] failed to reply in group fallback', ex);
+        }
+    }
+});
+// 'id' yazıldığında
+console.log('[bot] Registering id hears');
+bot.hears(/^\s*id\s*$/i, async (ctx) => {
+    console.log('[bot] hears id', { chatType: ctx.chat?.type, fromId: ctx.from?.id });
+    const userId = ctx.from?.id;
+    if (!userId)
+        return;
+    // Özel sohbette direkt yanıtla
+    if (ctx.chat?.type === 'private') {
+        try {
+            await ctx.reply(String(userId));
+            await ctx.reply(`/start aid-${String(userId)}`);
+        }
+        catch (e) {
+            console.warn('[bot] failed to reply to private id request', e);
+        }
+        return;
+    }
+    // Grup içindeyse DM atmayı dene, başarısız olursa grup içinde yanıt ver
+    try {
+        await ctx.telegram.sendMessage(userId, String(userId));
+        await ctx.telegram.sendMessage(userId, `/start aid-${String(userId)}`);
+        await ctx.reply('Telegram id bilgisi özelden gönderildi.');
+    }
+    catch (e) {
+        console.warn('[bot] failed to DM user for hears id', e);
+        try {
+            await ctx.reply(String(userId));
+        }
+        catch (ex) {
+            console.warn('[bot] failed to reply in group fallback', ex);
+        }
+    }
+});
+// Mesaj handler - hem grup hem özel mesajlar
+console.log('[bot] Registering message handler');
+bot.on('message', async (ctx) => {
+    const type = ctx.chat?.type;
+    const text = ('text' in ctx.message) ? ctx.message.text : '';
+    if (!text)
+        return;
+    // ÖZEL MESAJLAR - Kullanıcıdan gelen cevaplar
+    if (type === 'private') {
+        // Komutları atla (zaten yukarıda işleniyor)
+        if (text.startsWith('/'))
+            return;
+        const telegramUserId = ctx.from?.id;
+        const firstName = ctx.from?.first_name || '';
+        const lastName = ctx.from?.last_name || '';
+        const username = ctx.from?.username;
+        const displayName = `${firstName} ${lastName}`.trim() || 'Kullanıcı';
+        console.log('[bot] Private message received from user', { telegramUserId, text: text.substring(0, 50) });
+        // Test için hemen cevap gönder
+        await ctx.reply(`✅ Mesajınız alındı: "${text.substring(0, 30)}..."`);
+        try {
+            await (0, apiClient_1.saveUserReply)({
+                userId: telegramUserId,
+                chatId: ctx.chat.id,
+                message: text,
+                firstName,
+                lastName,
+                username
+            });
+            console.log('[bot] User reply saved successfully');
+        }
+        catch (e) {
+            console.error('[bot] Error processing user reply:', e);
+            await ctx.reply('❌ Mesajınız gönderilemedi. Lütfen önce /start komutuyla kayıt olun.');
+        }
+        return;
+    }
+    // GRUP MESAJLARI - Ticket oluşturma
+    if (type !== 'group' && type !== 'supergroup')
+        return;
+    const senderId = ctx.from?.id;
+    const isBot = ctx.from?.is_bot || false;
+    const isForwarded = !!ctx.message.forward_from || !!ctx.message.forward_from_chat;
+    console.log('[bot] message received', {
+        chatType: type,
+        fromId: senderId,
+        isBot,
+        isForwarded,
+        username: ctx.from?.username,
+        textPreview: text.substring(0, 50)
+    });
+    // Log kaydet - yardımcı fonksiyon
+    const saveLog = async (level, event, data, message) => {
+        try {
+            await fetch(`${env_1.env.API_BASE_URL}/logs`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    level,
+                    event,
+                    data,
+                    message,
+                    chatId: String(ctx.chat?.id),
+                    messageId: ctx.message?.message_id,
+                    fromId: String(senderId),
+                    isBot
+                })
+            });
+        }
+        catch (e) {
+            console.error('[bot] failed to save log', e);
+        }
+    };
+    await saveLog('info', 'message_received', {
+        chatType: type,
+        fromId: senderId,
+        isBot,
+        isForwarded,
+        username: ctx.from?.username,
+        textLength: text.length,
+        fullText: text
+    });
+    // Şablonu çöz
+    const data = parseTemplate(text);
+    const miss = missingFields(data);
+    if (miss.length > 0) {
+        await saveLog('warn', 'template_parse_failed', {
+            missingFields: miss,
+            textPreview: text.substring(0, 100)
+        }, 'Şablon eksik alanlar içeriyor');
+        // Bot mesajları için hata bildirimi gönderme (sadece kullanıcılar için)
+        if (isBot) {
+            console.log('[bot] skipping error notification for bot message', { fromId: senderId });
+            return;
+        }
+        // Kullanıcıya özel mesajla bildir
+        const userId = ctx.from?.id;
+        const notifyText = miss.includes('id |ID |Id')
+            ? 'id alanı zorunludur'
+            : `Eksik alan(lar): ${miss.join(', ')}. Lütfen "id / iletisim / detay" alanlarını doldurun.`;
+        const original = text || '(orijinal mesaj yok)';
+        const finalDM = `${notifyText}\n\nOrijinal mesaj:\n${original}`;
+        if (userId) {
+            try {
+                await ctx.telegram.sendMessage(userId, finalDM);
+            }
+            catch (e) {
+                console.warn('[bot] failed to send error DM', e);
+            }
+        }
+        return;
+    }
+    await saveLog('info', 'template_parsed', {
+        parsedData: data
+    }, 'Şablon başarıyla parse edildi');
+    // Zorunlu alanlar tamam → API'ye ilet
+    try {
+        console.log('[bot] sending to API intake', { chatId: ctx.chat?.id, messageId: ctx.message?.message_id });
+        const response = await (0, apiClient_1.createTicketAndAssign)({
+            chatId: ctx.chat.id,
+            messageId: ctx.message.message_id,
+            text,
+            from: {
+                id: ctx.from.id,
+                username: ctx.from?.username,
+                firstName: ctx.from?.first_name,
+                lastName: ctx.from?.last_name
+            }
+        });
+        console.log('[bot] successfully sent to API intake');
+        await saveLog('info', 'api_intake_success', {
+            ticketId: response.ticketId
+        }, 'API intake başarılı');
+    }
+    catch (e) {
+        console.error('[bot] failed to send to API intake', e);
+        await saveLog('error', 'api_intake_exception', {
+            error: String(e)
+        }, 'API intake exception');
+    }
+});
+// Inline butonlar
+console.log('[bot] Registering callback_query handler');
+bot.on('callback_query', async (ctx) => {
+    const data = ('data' in ctx.callbackQuery) ? String(ctx.callbackQuery.data) : '';
+    const [kind, ticketId] = data.split(':');
+    await ctx.answerCbQuery();
+});
+// API'ye düzenli ping gönder (her 10 saniyede bir)
+console.log('[bot] Setting up ping interval');
+setInterval(async () => {
+    try {
+        await fetch(`${env_1.env.API_BASE_URL}/bot/ping`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timestamp: Date.now() })
+        });
+    }
+    catch (e) {
+        console.error('[bot] Failed to ping API:', e);
+    }
+}, 10000);
+console.log('[bot] Setting up error handlers');
+// Crash durumunda yeniden başlatma
+process.on('uncaughtException', (error) => {
+    console.error('[bot] Uncaught Exception:', error);
+    console.log('[bot] Restarting in 5 seconds...');
+    setTimeout(() => {
+        process.exit(1);
+    }, 5000);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[bot] Unhandled Rejection at:', promise, 'reason:', reason);
+    console.log('[bot] Restarting in 5 seconds...');
+    setTimeout(() => {
+        process.exit(1);
+    }, 5000);
+});
+console.log('[bot] Launching bot...');
+// bot.launch({
+//   dropPendingUpdates: true,
+//   allowedUpdates: ['message', 'callback_query']
+// }).then(() => {
+// Manual check
+fetch(`https://api.telegram.org/bot${env_1.env.BOT_TOKEN}/getMe`)
+    .then(res => res.json())
+    .then(data => console.log('[bot] Manual getMe success:', JSON.stringify(data)))
+    .catch(err => console.error('[bot] Manual getMe failed:', err));
+// bot.launch().then(() => {
+//   console.log('[bot] Bot başlatıldı!');
+//   console.log('[bot] BOT_TOKEN:', env.BOT_TOKEN.substring(0, 10) + '...');
+//   console.log('[bot] API_BASE_URL:', env.API_BASE_URL);
+//   // İlk ping
+//   fetch(`${env.API_BASE_URL}/bot/ping`, {
+//     method: 'POST',
+//     headers: { 'Content-Type': 'application/json' },
+//     body: JSON.stringify({ timestamp: Date.now() })
+//   }).catch(e => console.error('[bot] Initial ping failed:', e));
+// }).catch(e => {
+//   console.error('[bot] Bot başlatılamadı:', e);
+//   process.exit(1);
+// });
+(async () => {
+    try {
+        console.log('[bot] Deleting webhook...');
+        await bot.telegram.deleteWebhook();
+        console.log('[bot] Webhook deleted');
+        console.log('[bot] Launching bot...');
+        await bot.launch();
+        console.log('[bot] Bot başlatıldı!');
+        console.log('[bot] BOT_TOKEN:', env_1.env.BOT_TOKEN.substring(0, 10) + '...');
+        console.log('[bot] API_BASE_URL:', env_1.env.API_BASE_URL);
+        // İlk ping
+        fetch(`${env_1.env.API_BASE_URL}/bot/ping`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ timestamp: Date.now() })
+        }).catch(e => console.error('[bot] Initial ping failed:', e));
+    }
+    catch (e) {
+        console.error('[bot] Bot başlatılamadı:', e);
+        process.exit(1);
+    }
+})();
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));

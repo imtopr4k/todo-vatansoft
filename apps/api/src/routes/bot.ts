@@ -74,5 +74,9 @@ r.post('/intake', async (req, res) => {
   res.json({ ticketId: String(t._id) });
 });
 
+r.post('/ping', (req, res) => {
+  console.log('[API] Ping received');
+  return res.json({ pong: true, timestamp: Date.now() });
+});
 
 export default r;

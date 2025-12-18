@@ -7,13 +7,13 @@ export default defineConfig({
         allowedHosts: ['todo.vatansoft.net', 'localhost', '127.0.0.1', '0.0.0.0'],
         host: '0.0.0.0',
         port: 5173,
-        // Origin: use the publicly reachable origin (used by the client to form HMR websocket URL)
-        origin: 'http://todo.vatansoft.net',
         hmr: {
             // protocol: 'ws',
-            // host: 'localhost',
-             host: 'todo.vatansoft.net',
-              protocol: 'http',
+            // host: 'todo.vatansoft.net',
+             protocol: 'http',
+             host: 'localhost',
+            port: 5173,
+            clientPort: 5173
         },
     },
 });

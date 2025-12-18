@@ -6,6 +6,7 @@ export interface Ticket {
     telegram: {
         chatId: number;
         messageId: number;
+        userChatId?: number;
         text?: string;
         from: { id?: number; username?: string; firstName?: string; lastName?: string; displayName: string }
     };

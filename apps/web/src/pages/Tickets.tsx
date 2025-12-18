@@ -5,6 +5,7 @@ import type { Ticket } from '../types';
 import { me } from '../auth';
 import Header from '../Components/Header';
 import { Modal } from '../Components/Modal';
+import ChatModal from '../Components/ChatModal';
 
 // Yanıp sönme animasyonu için style
 const blinkStyle = document.createElement('style');
@@ -200,6 +201,7 @@ function TicketCard({
   // onNotify,
   onWaiting,
   onInterested,
+  onChat,
   currentUserId,
   isSuperAgent,
 }: {
@@ -215,6 +217,7 @@ function TicketCard({
   // onNotify: (ticketId: string) => void;
   onWaiting: (ticketId: string) => void;
   onInterested: (ticketId: string) => void;
+  onChat: (ticketId: string, userName: string) => void;
   currentUserId: string;
   isSuperAgent: boolean;
 }) {
@@ -433,6 +436,24 @@ function TicketCard({
           >
              ⏳Üye Bekleniy.
           </button>
+          {/* Sohbet butonu - her zaman göster */}
+          <button 
+            onClick={() => {
+              if (!it.telegram?.userChatId) {
+                alert('Kullanıcı henüz bot\'a /start komutu göndermedi. Önce kullanıcının @' + (it.telegram?.from?.username || 'bot') + ' bot\'una /start göndermesi gerekiyor.');
+                return;
+              }
+              onChat(it.id, it.telegram?.from?.username || it.telegram?.from?.firstName || 'Kullanıcı');
+            }} 
+            className="btn" 
+            style={{
+              background:'linear-gradient(90deg,#8b5cf622,#7c3aed33)',
+              opacity: !it.telegram?.userChatId ? 0.6 : 1,
+            }}
+            title={!it.telegram?.userChatId ? 'Kullanıcı henüz bot\'a /start göndermedi' : 'Kullanıcı ile sohbet başlat'}
+          >
+            💬 Sohbet
+          </button>
           {canDelete && (
             <button onClick={() => onDelete(it.id)} className="btn ghost" title="Bu görevi sil">
               🗑️ Sil
@@ -497,6 +518,11 @@ export default function Tickets() {
   const [lastCheckedReported, setLastCheckedReported] = useState<string[]>([]);
   const [lastCheckedWaiting, setLastCheckedWaiting] = useState<string[]>([]);
   const [lastTotalCount, setLastTotalCount] = useState<number | null>(null);
+
+  // Chat modal state
+  const [chatModalOpen, setChatModalOpen] = useState(false);
+  const [chatTicketId, setChatTicketId] = useState<string | undefined>();
+  const [chatUserName, setChatUserName] = useState<string>('');
 
   // Append agent signature to outgoing messages (not visible in textarea)
   function appendAgentSignature(raw: string) {
@@ -1203,6 +1229,11 @@ function refresh() {
                 onReport={openReportModal}
                 onWaiting={openWaitingModal}
                 onInterested={onInterested}
+                onChat={(ticketId, userName) => {
+                  setChatTicketId(ticketId);
+                  setChatUserName(userName);
+                  setChatModalOpen(true);
+                }}
                 currentUserId={user?.id || ''}
                 isSuperAgent={effectiveIsSuperAgent}
               />
@@ -1418,6 +1449,15 @@ function refresh() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Chat Modal */}
+      {chatModalOpen && (
+        <ChatModal 
+          ticketId={chatTicketId!}
+          userName={chatUserName}
+          onClose={() => setChatModalOpen(false)}
+        />
       )}
     </>
   );

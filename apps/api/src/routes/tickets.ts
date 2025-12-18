@@ -8,6 +8,47 @@ import { sendReply, sendDM } from '../services/telegram';
 const r = Router();
 r.use(requireAuth);
 
+// Tek ticket detayı
+r.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const auth = (req as any).auth as { sub: string; role: 'agent' | 'supervisor' };
+
+    const ticket = await Ticket.findById(id)
+      .populate('assignedTo', 'name externalUserId isActive')
+      .lean();
+
+    if (!ticket) {
+      return res.status(404).json({ message: 'Ticket not found' });
+    }
+
+    // Sadece kendi ticket'ını veya supervisor tüm ticket'ları görebilir
+    if (auth.role !== 'supervisor' && String(ticket.assignedTo?._id || ticket.assignedTo) !== auth.sub) {
+      return res.status(403).json({ message: 'Not authorized' });
+    }
+
+    const result = {
+      id: String(ticket._id),
+      status: ticket.status,
+      telegram: ticket.telegram,
+      assignedTo: ticket.assignedTo && typeof ticket.assignedTo === 'object'
+        ? (ticket.assignedTo as any).name
+        : String(ticket.assignedTo),
+      assignedAt: ticket.assignedAt || ticket.createdAt,
+      resolutionText: ticket.resolutionText,
+      interestedBy: ticket.interestedBy ? String(ticket.interestedBy) : undefined,
+      interestedAt: ticket.interestedAt,
+      updatedAt: ticket.updatedAt,
+      createdAt: ticket.createdAt
+    };
+
+    return res.json(result);
+  } catch (err) {
+    console.error('[API] Error fetching ticket:', err);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
 r.get('/', async (req, res) => {
   try {
     const auth = (req as any).auth as { sub: string; role: 'agent' | 'supervisor' };

@@ -10,7 +10,9 @@ import agentsRouter from './routes/agents';
 import botRoutes from './routes/bot';
 import adminRouter from './routes/admin';
 import logsRouter from './routes/logs';
+import chatRouter from './routes/chat';
 import { initScheduler } from './services/scheduler';
+import { createHealthRouter } from './services/healthCheck';
 
 (async () => {
   await connectMongo();
@@ -48,11 +50,12 @@ import { initScheduler } from './services/scheduler';
   app.options('*', cors(corsOptions));
   app.use(express.json());
   app.use('/admin', adminRouter);
-  app.get('/health', (_req, res) => res.json({ ok: true }));
+  app.use('/', createHealthRouter());
   app.use('/auth', authRoutes);
   app.use('/agents', agentsRouter);
   app.use('/tickets', ticketRoutes);
   app.use('/logs', logsRouter);
+  app.use('/chat', chatRouter);
   app.use(express.json());
   app.use('/bot', botRoutes);
   app.get('/debug/db', async (_req, res) => {
@@ -80,4 +83,21 @@ import { initScheduler } from './services/scheduler';
   });
 
   server.listen(env.PORT, () => console.log(`[api] listening on ${env.PORT}`));
+
+  // Crash durumunda yeniden başlatma
+  process.on('uncaughtException', (error) => {
+    console.error('[api] Uncaught Exception:', error);
+    console.log('[api] Restarting in 5 seconds...');
+    setTimeout(() => {
+      process.exit(1);
+    }, 5000);
+  });
+
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('[api] Unhandled Rejection at:', promise, 'reason:', reason);
+    console.log('[api] Restarting in 5 seconds...');
+    setTimeout(() => {
+      process.exit(1);
+    }, 5000);
+  });
 })();

@@ -6,7 +6,8 @@ const TicketSchema = new Schema({
     chatId: { type: Number, required: true },
     messageId: { type: Number, required: true },
     resolutionMessageId: { type: Number },
-    // Yeni alanlar: web’de görselleştirme için
+    userChatId: { type: Number },                                  // Kullanıcının özel chat ID'si (DM için)
+    // Yeni alanlar: web'de görselleştirme için
     text: { type: String },                                        // Mesaj içeriği
     from: {                                                        // Gönderen bilgisi
       id: { type: Number },                                        // telegram user id
