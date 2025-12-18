@@ -329,7 +329,7 @@ export default function Chat() {
                   fontSize: '16px',
                   flexShrink: 0
                 }}>
-                  {u.userName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+                  {u.firstName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
                 </div>
 
                 <div style={{ flex: 1, minWidth: 0 }}>
