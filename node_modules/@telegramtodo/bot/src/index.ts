@@ -318,29 +318,33 @@ bot.on('message', async (ctx) => {
       textPreview: text.substring(0, 100)
     }, 'Şablon eksik alanlar içeriyor');
 
-    // Bot mesajları için hata bildirimi gönderme (sadece kullanıcılar için)
-    if (isBot) {
-      console.log('[bot] skipping error notification for bot message', { fromId: senderId });
+    // Bot mesajlarında: Sadece izin verilen bot'tan geliyorsa, eksik alanlara rağmen devam et
+    if (isBot && senderId === env.ALLOWED_BOT_ID) {
+      console.log('[bot] Allowed bot message with missing fields, will process anyway', { fromId: senderId });
+      // Eksik alanlara rağmen devam et - aşağıdaki ticket oluşturma koduna geç
+    } else if (isBot) {
+      // Başka bir bot'tan geliyorsa görmezden gel
+      console.log('[bot] Unknown bot message, ignoring', { fromId: senderId });
+      return;
+    } else {
+      // Kullanıcıya özel mesajla bildir
+      const userId = ctx.from?.id;
+      const notifyText = miss.includes('id |ID |Id')
+        ? 'id alanı zorunludur'
+        : `Eksik alan(lar): ${miss.join(', ')}. Lütfen "id / iletisim / detay" alanlarını doldurun.`;
+
+      const original = text || '(orijinal mesaj yok)';
+      const finalDM = `${notifyText}\n\nOrijinal mesaj:\n${original}`;
+
+      if (userId) {
+        try {
+          await ctx.telegram.sendMessage(userId, finalDM);
+        } catch (e) {
+          console.warn('[bot] failed to send error DM', e);
+        }
+      }
       return;
     }
-
-    // Kullanıcıya özel mesajla bildir
-    const userId = ctx.from?.id;
-    const notifyText = miss.includes('id |ID |Id')
-      ? 'id alanı zorunludur'
-      : `Eksik alan(lar): ${miss.join(', ')}. Lütfen "id / iletisim / detay" alanlarını doldurun.`;
-
-    const original = text || '(orijinal mesaj yok)';
-    const finalDM = `${notifyText}\n\nOrijinal mesaj:\n${original}`;
-
-    if (userId) {
-      try {
-        await ctx.telegram.sendMessage(userId, finalDM);
-      } catch (e) {
-        console.warn('[bot] failed to send error DM', e);
-      }
-    }
-    return;
   }
 
   await saveLog('info', 'template_parsed', {
@@ -349,17 +353,23 @@ bot.on('message', async (ctx) => {
 
   // Zorunlu alanlar tamam → API'ye ilet
   try {
-    console.log('[bot] sending to API intake', { chatId: ctx.chat?.id, messageId: ctx.message?.message_id });
+    console.log('[bot] sending to API intake', { 
+      chatId: ctx.chat?.id, 
+      messageId: ctx.message?.message_id,
+      isBot,
+      hasFromId: !!ctx.from?.id
+    });
+    
     const response = await createTicketAndAssign({
       chatId: ctx.chat.id,
       messageId: ctx.message.message_id,
       text,
-      from: {
-        id: ctx.from!.id,
+      from: ctx.from?.id ? {
+        id: ctx.from.id,
         username: ctx.from?.username,
         firstName: ctx.from?.first_name,
         lastName: ctx.from?.last_name
-      }
+      } : undefined
     });
 
     console.log('[bot] successfully sent to API intake');
@@ -421,10 +431,15 @@ console.log('[bot] Launching bot...');
 // }).then(() => {
 
 // Manual check
-fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/getMe`)
-  .then(res => res.json())
-  .then(data => console.log('[bot] Manual getMe success:', JSON.stringify(data)))
-  .catch(err => console.error('[bot] Manual getMe failed:', err));
+(async () => {
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/getMe`);
+    const data = await res.json();
+    console.log('[bot] Manual getMe success:', JSON.stringify(data));
+  } catch (err) {
+    console.error('[bot] Manual getMe failed:', err);
+  }
+})();
 
 // bot.launch().then(() => {
 //   console.log('[bot] Bot başlatıldı!');
@@ -444,17 +459,20 @@ fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/getMe`)
 (async () => {
   try {
     console.log('[bot] Deleting webhook...');
-    await bot.telegram.deleteWebhook();
+    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
     console.log('[bot] Webhook deleted');
 
-    console.log('[bot] Launching bot...');
-    await bot.launch();
+    console.log('[bot] Launching bot with allowed_updates...');
+    await bot.launch({
+      allowedUpdates: ['message', 'callback_query', 'channel_post']
+    });
     console.log('[bot] Bot başlatıldı!');
     console.log('[bot] BOT_TOKEN:', env.BOT_TOKEN.substring(0, 10) + '...');
     console.log('[bot] API_BASE_URL:', env.API_BASE_URL);
+    console.log('[bot] Allowed updates: message, callback_query, channel_post');
     
     // İlk ping
-    fetch(`${env.API_BASE_URL}/bot/ping`, {
+    await fetch(`${env.API_BASE_URL}/bot/ping`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ timestamp: Date.now() })

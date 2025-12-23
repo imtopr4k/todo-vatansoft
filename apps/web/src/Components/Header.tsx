@@ -25,11 +25,9 @@ export default function Header() {
   }, [theme]);
 
   const [isActive, setIsActive] = useState<boolean | null>(null);
-  const [isSuperUser, setIsSuperUser] = useState(false);
   const [allAgents, setAllAgents] = useState<Array<{ id: string; name: string; externalUserId?: string; isActive: boolean }>>([]);
   const [showSpecialView, setShowSpecialView] = useState(false);
   const [showOnlineUsers, setShowOnlineUsers] = useState(false);
-  const [adminView, setAdminView] = useState<'agent' | 'temsilci'>(() => (localStorage.getItem('adminViewMode') === 'agents' ? 'agent' : 'temsilci'));
 
   useEffect(() => {
     let mounted = true;
@@ -38,9 +36,6 @@ export default function Header() {
         const list = await api<any[]>('/agents');
         const meAgent = list.find((a) => String(a.id) === String(user?.id));
         if (mounted) setIsActive(!!meAgent?.isActive);
-        if (meAgent && String(meAgent.externalUserId) === '1') {
-          setIsSuperUser(true);
-        }
         
         // Tüm ajanları kaydet (externalUserId 1 hariç)
         const filteredAgents = list
@@ -103,9 +98,6 @@ export default function Header() {
             <Link to="/chat" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Sohbet</Link>
             <Link to="/stats" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>İstatistik</Link>
             <Link to="/analysis" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Analiz</Link>
-            {user?.role === 'supervisor' && (
-              <Link to="/admin" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Admin</Link>
-            )}
             {showSpecialView && (
               <Link to="/logs" style={{ color: 'var(--muted)', fontWeight: 700, textDecoration: 'none' }}>Loglar</Link>
             )}
@@ -129,15 +121,6 @@ export default function Header() {
           )}
         </div>
       </div>
-
-      {/* center admin toggle for externalUserId=1 */}
-      {isSuperUser && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ fontWeight: 700, color: 'var(--muted)', marginRight: 8 }}>Mode</div>
-          <button className={`chip ${adminView === 'agent' ? 'active' : ''}`} onClick={() => { localStorage.setItem('adminViewMode', 'agents'); setAdminView('agent'); window.dispatchEvent(new CustomEvent('adminViewChange', { detail: 'agents' })); }}>Agent</button>
-          <button className={`chip ${adminView === 'temsilci' ? 'active' : ''}`} onClick={() => { localStorage.setItem('adminViewMode', 'temsilci'); setAdminView('temsilci'); window.dispatchEvent(new CustomEvent('adminViewChange', { detail: 'temsilci' })); }}>Temsilci</button>
-        </div>
-      )}
 
       <div className="header-actions">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
