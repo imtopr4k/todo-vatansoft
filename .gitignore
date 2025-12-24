@@ -1,4 +1,25 @@
 .DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
 .env.api
 .env.web
 .env.bot
+
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build outputs
+dist/
+*/dist/
+build/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
