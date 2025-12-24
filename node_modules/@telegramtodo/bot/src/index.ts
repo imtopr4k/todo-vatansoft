@@ -267,14 +267,16 @@ bot.on('message', async (ctx) => {
   const isBot = ctx.from?.is_bot || false;
   const isForwarded = !!(ctx.message as any).forward_from || !!(ctx.message as any).forward_from_chat;
   
-  console.log('[bot] message received', { 
-    chatType: type, 
-    fromId: senderId, 
-    isBot, 
-    isForwarded,
-    username: ctx.from?.username,
-    textPreview: text.substring(0, 50) 
-  });
+  console.log('[bot] === GROUP MESSAGE RECEIVED ===');
+  console.log('[bot] chatType:', type);
+  console.log('[bot] fromId:', senderId);
+  console.log('[bot] fromUsername:', ctx.from?.username);
+  console.log('[bot] isBot:', isBot);
+  console.log('[bot] isForwarded:', isForwarded);
+  console.log('[bot] ALLOWED_BOT_ID:', env.ALLOWED_BOT_ID);
+  console.log('[bot] Match?:', senderId === env.ALLOWED_BOT_ID);
+  console.log('[bot] textPreview:', text.substring(0, 100));
+  console.log('[bot] ================================');
 
   // Log kaydet - yardımcı fonksiyon
   const saveLog = async (level: string, event: string, data: any, message?: string) => {
@@ -312,17 +314,16 @@ bot.on('message', async (ctx) => {
   const data = parseTemplate(text);
   const miss = missingFields(data);
 
-  if (miss.length > 0) {
+  // Bot mesajlarında: Sadece izin verilen bot'tan geliyorsa, eksik alanlara rağmen devam et
+  const shouldProcessAnywayFromBot = isBot && senderId === env.ALLOWED_BOT_ID;
+
+  if (miss.length > 0 && !shouldProcessAnywayFromBot) {
     await saveLog('warn', 'template_parse_failed', {
       missingFields: miss,
       textPreview: text.substring(0, 100)
     }, 'Şablon eksik alanlar içeriyor');
 
-    // Bot mesajlarında: Sadece izin verilen bot'tan geliyorsa, eksik alanlara rağmen devam et
-    if (isBot && senderId === env.ALLOWED_BOT_ID) {
-      console.log('[bot] Allowed bot message with missing fields, will process anyway', { fromId: senderId });
-      // Eksik alanlara rağmen devam et - aşağıdaki ticket oluşturma koduna geç
-    } else if (isBot) {
+    if (isBot) {
       // Başka bir bot'tan geliyorsa görmezden gel
       console.log('[bot] Unknown bot message, ignoring', { fromId: senderId });
       return;
@@ -345,6 +346,20 @@ bot.on('message', async (ctx) => {
       }
       return;
     }
+  }
+
+  // İzin verilen bot'tan gelen mesaj için özel log
+  if (shouldProcessAnywayFromBot) {
+    console.log('[bot] Allowed bot message detected, processing anyway', { 
+      fromId: senderId, 
+      missingFields: miss,
+      hasFields: miss.length === 0 
+    });
+    await saveLog('info', 'allowed_bot_message', {
+      fromId: senderId,
+      missingFields: miss,
+      textPreview: text.substring(0, 100)
+    }, 'İzin verilen bot mesajı işleniyor');
   }
 
   await saveLog('info', 'template_parsed', {

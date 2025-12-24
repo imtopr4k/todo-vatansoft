@@ -116,7 +116,7 @@ r.post('/set-active', requireAuth, async (req, res) => {
         if (agent) {
           const pending = await (await import('../models/Ticket')).Ticket.findOne({ assignedTo: { $exists: false } }).sort({ createdAt: 1 }).exec();
                 if (pending) {
-            pending.assignedTo = agent._id;
+            pending.assignedTo = agent._id as any;
             pending.assignedAt = new Date();
             pending.history = pending.history || [];
             pending.history.push({ at: new Date(), byAgentId: agent._id, action: 'auto-assign-on-active', note: `Assigned when ${agent.name} became active` });

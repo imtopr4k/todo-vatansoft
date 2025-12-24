@@ -61,6 +61,9 @@ import { createHealthRouter } from './services/healthCheck';
   app.get('/debug/db', async (_req, res) => {
     const mongoose = (await import('mongoose')).default;
     const db = mongoose.connection.db;
+    if (!db) {
+      return res.status(500).json({ message: 'Database not connected' });
+    }
     const colls = await db.listCollections().toArray();
     res.json({
       mongoUri: process.env.MONGO_URI,

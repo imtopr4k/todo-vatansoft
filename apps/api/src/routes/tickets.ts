@@ -23,7 +23,8 @@ r.get('/:id', async (req, res) => {
     }
 
     // Sadece kendi ticket'ını veya supervisor tüm ticket'ları görebilir
-    if (auth.role !== 'supervisor' && String(ticket.assignedTo?._id || ticket.assignedTo) !== auth.sub) {
+    const assignedToId = (ticket.assignedTo as any)?._id || ticket.assignedTo;
+    if (auth.role !== 'supervisor' && String(assignedToId) !== auth.sub) {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
@@ -150,7 +151,20 @@ r.post('/:id/resolve', async (req, res) => {
         signature = `${statusLabel(prevStatus)} => ${statusLabel(t.status)}`;
       }
       const final = `${msg || 'Çözümlendi'}${signature ? '\n\n-' + signature : ''}`;
-      await sendReply(t.telegram.chatId, t.telegram.messageId, final);
+      
+      // Gruba yanıt gönder
+      if (t.telegram?.chatId && t.telegram?.messageId) {
+        await sendReply(t.telegram.chatId, t.telegram.messageId, final);
+      }
+      
+      // Kullanıcıya özel mesaj gönder
+      if (t.telegram?.from?.id) {
+        const actor = await Agent.findById(auth.sub).lean();
+        const actorName = actor?.name || 'Destek Ekibi';
+        const originalText = t.telegram?.text || 'Mesaj metni bulunamadı';
+        const userMessage = `✅ Talebiniz Çözümlendi\n\n📋 Talebiniz:\n${originalText}\n\n💬 Çözüm Notu:\n${msg || 'Sorun giderildi.'}\n\n👤 İşlemi Yapan: ${actorName}\n📊 Durum: Çözümlendi`;
+        await sendDM(t.telegram.from.id, userMessage);
+      }
     } catch (e) {
     }
 
@@ -183,9 +197,20 @@ r.post('/:id/report', async (req, res) => {
     // Send a group reply to the original telegram message to notify that it was reported
     try {
       if (t.telegram?.chatId && t.telegram?.messageId) {
-  const label = statusLabel(t.status);
-  const final = `${msg || 'Konu yazılıma iletilmiştir'}${label ? '\n\n-' + label : ''}`;
-  await sendReply(t.telegram.chatId, t.telegram.messageId, final);
+        const label = statusLabel(t.status);
+        const final = `${msg || 'Konu yazılıma iletilmiştir'}${label ? '\n\n-' + label : ''}`;
+        
+        // Gruba yanıt gönder
+        await sendReply(t.telegram.chatId, t.telegram.messageId, final);
+        
+        // Kullanıcıya özel mesaj gönder
+        if (t.telegram?.from?.id) {
+          const actor = await Agent.findById(auth.sub).lean();
+          const actorName = actor?.name || 'Destek Ekibi';
+          const originalText = t.telegram?.text || 'Mesaj metni bulunamadı';
+          const userMessage = `📤 Talebiniz Yazılım Ekibine İletildi\n\n📋 Talebiniz:\n${originalText}\n\n💬 Not:\n${msg || 'Konunuz yazılım departmanına yönlendirildi.'}\n\n👤 İşlemi Yapan: ${actorName}\n📊 Durum: Yazılıma İletildi`;
+          await sendDM(t.telegram.from.id, userMessage);
+        }
       }
     } catch (e) {
     }
@@ -257,8 +282,9 @@ r.get('/stats/senders', async (req, res) => {
         entry.projects = entry.projects || {};
         const norm = normalizeProjKey(proj);
         if (!entry.projects[norm]) entry.projects[norm] = { count: 0, variants: {} } as any;
-        entry.projects[norm].count = (entry.projects[norm].count || 0) + 1;
-        entry.projects[norm].variants[proj] = (entry.projects[norm].variants[proj] || 0) + 1;
+        const projEntry = entry.projects[norm] as any;
+        projEntry.count = (projEntry.count || 0) + 1;
+        projEntry.variants[proj] = (projEntry.variants[proj] || 0) + 1;
       }
     }
 
@@ -275,14 +301,16 @@ r.get('/stats/senders', async (req, res) => {
         if (used.has(k)) continue;
         merged[k] = { ...(projects[k] as any) };
         // ensure shape
-        merged[k].count = merged[k].count || 0;
-        merged[k].variants = merged[k].variants || {};
+        const mergedEntry = merged[k] as any;
+        mergedEntry.count = mergedEntry.count || 0;
+        mergedEntry.variants = mergedEntry.variants || {};
         for (const kk of keys) {
           if (kk === k || used.has(kk)) continue;
           // if kk contains k (longer phrase containing the shorter base), merge kk into k
           if (kk.includes(k)) {
-            merged[k].count = (merged[k].count || 0) + (projects[kk].count || 0);
-            merged[k].variants = { ...(merged[k].variants || {}), ...(projects[kk].variants || {}) };
+            const projectsEntry = projects[kk] as any;
+            mergedEntry.count = (mergedEntry.count || 0) + (projectsEntry.count || 0);
+            mergedEntry.variants = { ...(mergedEntry.variants || {}), ...(projectsEntry.variants || {}) };
             used.add(kk);
           }
         }
@@ -425,7 +453,16 @@ r.post('/:id/unreachable', async (req, res) => {
         const actorName = actor?.name || '';
         const label = statusLabel(t.status);
         const final = `${msg || 'wp üzerinden iletişime geçildi'}${label ? '\n\n-' + label : ''}`;
+        
+        // Gruba yanıt gönder
         await sendReply(t.telegram.chatId, t.telegram.messageId, final);
+        
+        // Kullanıcıya özel mesaj gönder
+        if (t.telegram?.from?.id) {
+          const originalText = t.telegram?.text || 'Mesaj metni bulunamadı';
+          const userMessage = `📞 Size Ulaşmaya Çalıştık\n\n📋 Talebiniz:\n${originalText}\n\n💬 Not:\n${msg || 'WhatsApp üzerinden iletişime geçtik.'}\n\n👤 İşlemi Yapan: ${actorName}\n📊 Durum: Ulaşılamadı`;
+          await sendDM(t.telegram.from.id, userMessage);
+        }
       }
     } catch (e) {
     }
@@ -756,9 +793,11 @@ r.post('/:id/waiting', async (req, res) => {
     const userId = from.id || from.telegramUserId || null;
     
     if (userId) {
+      const actor = await Agent.findById(auth.sub).lean();
+      const actorName = actor?.name || 'Destek Ekibi';
       const baseMsg = String((message ?? '').trim()) || 'Lütfen eksik bilgileri tamamlayınız.';
-      const original = (t as any).telegram?.text || '(orijinal mesaj yok)';
-      const text = `${baseMsg}\n\nOrijinal mesaj:\n${original}`;
+      const originalText = (t as any).telegram?.text || 'Mesaj metni bulunamadı';
+      const text = `⏳ Talebiniz İçin Ek Bilgi Bekleniyor\n\n📋 Talebiniz:\n${originalText}\n\n💬 İstek:\n${baseMsg}\n\n👤 İşlemi Yapan: ${actorName}\n📊 Durum: Üye Bekleniyor`;
 
       try {
         await sendDM(Number(userId), text);

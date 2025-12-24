@@ -16,6 +16,7 @@ services:
       - ./.env.bot
     environment:
       API_BASE_URL: http://api:8990
+      ALLOWED_BOT_ID: 6285996403
     depends_on:
       - api
 
