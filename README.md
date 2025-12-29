@@ -4,6 +4,40 @@ React + Vite + TypeScript (web), Node.js + Express (api), Telegraf (bot), MongoD
 
 ## Hızlı Başlangıç
 
+### ⚠️ ÖNEMLİ: Bot Ayarları (@BotFather)
+Botun düzgün çalışması için **@BotFather** üzerinden şu ayarları yapmanız **zorunludur**:
+
+#### 1. Botun Gruplara Katılmasını Aktifleştirin
+```
+@BotFather'a gidin
+/mybots
+Botunuzu seçin
+Bot Settings → Allow Groups? → Turn groups on
+```
+
+#### 2. Group Privacy'yi Kapatın (Tüm mesajları görebilmesi için)
+```
+@BotFather'a gidin
+/mybots
+Botunuzu seçin
+Bot Settings → Group Privacy → Turn off
+```
+
+**Açıklama:** 
+- `Allow Groups: ON` - Bot gruplara katılabilir
+- `Group Privacy: OFF` - Bot gruptaki TÜM mesajları okuyabilir (diğer botların mesajları dahil)
+- `Group Privacy: ON` (varsayılan) - Bot SADECE kendisine mention olan veya komut içeren mesajları görür
+
+**Kontrol:** Şu komutu çalıştırarak ayarları kontrol edebilirsiniz:
+```powershell
+$token = "BOT_TOKEN_BURAYA"
+Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/getMe" | ConvertTo-Json
+```
+
+Çıktıda şunları görmelisiniz:
+- `"can_join_groups": true`
+- `"can_read_all_group_messages": true`
+
 ### Docker ile (Önerilen)
 1. `.env.api` / `.env.bot` / `.env.web` dosyalarını `.example`'dan kopyalayın ve doldurun.
 2. `docker compose build` ve `docker compose up -d` çalıştırın.

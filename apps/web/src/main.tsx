@@ -7,9 +7,7 @@ import Tickets from './pages/Tickets';
 import Chat from './pages/Chat';
 import Stats from './pages/Stats';
 import Analysis from './pages/Analysis';
-import Test1907 from './pages/Test1907';
 import Logs from './pages/Logs';
-import { SystemStatus } from './Components/SystemStatus';
 import { me } from './auth';
 import './styles.css';
 
@@ -21,7 +19,6 @@ function RequireAuth({ children }: { children: JSX.Element }) {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <SystemStatus />
       <Routes>
         <Route path="/login" element={<Login/>} />
         <Route path="/" element={<RequireAuth><Dashboard/></RequireAuth>} />
@@ -29,7 +26,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/chat" element={<RequireAuth><Chat/></RequireAuth>} />
         <Route path="/stats" element={<RequireAuth><Stats/></RequireAuth>} />
   <Route path="/analysis" element={<RequireAuth><Analysis/></RequireAuth>} />
-        <Route path="/test1907" element={<RequireAuth><Test1907/></RequireAuth>} />
         <Route path="/logs" element={<RequireAuth><Logs/></RequireAuth>} />
       </Routes>
     </BrowserRouter>

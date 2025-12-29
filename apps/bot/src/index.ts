@@ -276,6 +276,8 @@ bot.on('message', async (ctx) => {
   console.log('[bot] ALLOWED_BOT_ID:', env.ALLOWED_BOT_ID);
   console.log('[bot] Match?:', senderId === env.ALLOWED_BOT_ID);
   console.log('[bot] textPreview:', text.substring(0, 100));
+  console.log('[bot] message object keys:', Object.keys(ctx.message));
+  console.log('[bot] via_bot:', (ctx.message as any).via_bot);
   console.log('[bot] ================================');
 
   // Log kaydet - yardımcı fonksiyon
@@ -381,9 +383,9 @@ bot.on('message', async (ctx) => {
       text,
       from: ctx.from?.id ? {
         id: ctx.from.id,
-        username: ctx.from?.username,
-        firstName: ctx.from?.first_name,
-        lastName: ctx.from?.last_name
+        username: ctx.from.username,
+        firstName: ctx.from.first_name,
+        lastName: ctx.from.last_name
       } : undefined
     });
 
@@ -407,93 +409,52 @@ bot.on('callback_query', async (ctx) => {
   await ctx.answerCbQuery();
 });
 
-// API'ye düzenli ping gönder (her 10 saniyede bir)
-console.log('[bot] Setting up ping interval');
-setInterval(async () => {
-  try {
-    await fetch(`${env.API_BASE_URL}/bot/ping`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ timestamp: Date.now() })
-    });
-  } catch (e) {
-    console.error('[bot] Failed to ping API:', e);
-  }
-}, 10000);
-
-console.log('[bot] Setting up error handlers');
-// Crash durumunda yeniden başlatma
-process.on('uncaughtException', (error) => {
-  console.error('[bot] Uncaught Exception:', error);
-  console.log('[bot] Restarting in 5 seconds...');
-  setTimeout(() => {
-    process.exit(1);
-  }, 5000);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[bot] Unhandled Rejection at:', promise, 'reason:', reason);
-  console.log('[bot] Restarting in 5 seconds...');
-  setTimeout(() => {
-    process.exit(1);
-  }, 5000);
-});
-
+// Bot'u başlat
 console.log('[bot] Launching bot...');
-// bot.launch({
-//   dropPendingUpdates: true,
-//   allowedUpdates: ['message', 'callback_query']
-// }).then(() => {
 
-// Manual check
+// Önce bot ayarlarını kontrol et
 (async () => {
   try {
-    const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/getMe`);
-    const data = await res.json();
-    console.log('[bot] Manual getMe success:', JSON.stringify(data));
-  } catch (err) {
-    console.error('[bot] Manual getMe failed:', err);
-  }
-})();
-
-// bot.launch().then(() => {
-//   console.log('[bot] Bot başlatıldı!');
-//   console.log('[bot] BOT_TOKEN:', env.BOT_TOKEN.substring(0, 10) + '...');
-//   console.log('[bot] API_BASE_URL:', env.API_BASE_URL);
-//   // İlk ping
-//   fetch(`${env.API_BASE_URL}/bot/ping`, {
-//     method: 'POST',
-//     headers: { 'Content-Type': 'application/json' },
-//     body: JSON.stringify({ timestamp: Date.now() })
-//   }).catch(e => console.error('[bot] Initial ping failed:', e));
-// }).catch(e => {
-//   console.error('[bot] Bot başlatılamadı:', e);
-//   process.exit(1);
-// });
-
-(async () => {
-  try {
-    console.log('[bot] Deleting webhook...');
-    await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-    console.log('[bot] Webhook deleted');
-
-    console.log('[bot] Launching bot with allowed_updates...');
-    await bot.launch({
-      allowedUpdates: ['message', 'callback_query', 'channel_post']
-    });
-    console.log('[bot] Bot başlatıldı!');
-    console.log('[bot] BOT_TOKEN:', env.BOT_TOKEN.substring(0, 10) + '...');
-    console.log('[bot] API_BASE_URL:', env.API_BASE_URL);
-    console.log('[bot] Allowed updates: message, callback_query, channel_post');
+    const meResponse = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/getMe`);
+    const meData: any = await meResponse.json();
     
-    // İlk ping
-    await fetch(`${env.API_BASE_URL}/bot/ping`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ timestamp: Date.now() })
-    }).catch(e => console.error('[bot] Initial ping failed:', e));
+    if (meData.ok) {
+      const botInfo = meData.result;
+      console.log('[bot] Bot bilgileri:', {
+        username: botInfo.username,
+        canJoinGroups: botInfo.can_join_groups,
+        canReadAllGroupMessages: botInfo.can_read_all_group_messages
+      });
+      
+      // Uyarılar
+      if (!botInfo.can_join_groups) {
+        console.error('[bot] ❌ HATA: Bot gruplara katılamaz!');
+        console.error('[bot] @BotFather -> /mybots -> Bot Settings -> Allow Groups? -> Turn groups on');
+      }
+      
+      if (!botInfo.can_read_all_group_messages) {
+        console.error('[bot] ❌ UYARI: Bot tüm grup mesajlarını okuyamaz!');
+        console.error('[bot] Diğer bot mesajlarını görmek için:');
+        console.error('[bot] @BotFather -> /mybots -> Bot Settings -> Group Privacy -> Turn off');
+      }
+      
+      if (botInfo.can_join_groups && botInfo.can_read_all_group_messages) {
+        console.log('[bot] ✅ Bot ayarları doğru yapılandırılmış!');
+      }
+    }
   } catch (e) {
-    console.error('[bot] Bot başlatılamadı:', e);
+    console.warn('[bot] Bot bilgileri alınamadı:', e);
+  }
+  
+  // Bot'u başlat
+  try {
+    await bot.launch({
+      allowedUpdates: ['message', 'callback_query', 'channel_post'],
+      dropPendingUpdates: true
+    });
+    console.log('[bot] ✅ Bot başlatıldı!');
+  } catch (e) {
+    console.error('[bot] ❌ Bot başlatılamadı:', e);
     process.exit(1);
   }
 })();
