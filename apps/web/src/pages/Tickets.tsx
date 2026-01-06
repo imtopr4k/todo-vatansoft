@@ -6,6 +6,7 @@ import { me } from '../auth';
 import Header from '../Components/Header';
 import { Modal } from '../Components/Modal';
 import ChatModal from '../Components/ChatModal';
+import { useNotifications } from '../hooks/useNotifications';
 
 // Yanıp sönme animasyonu için style
 const blinkStyle = document.createElement('style');
@@ -303,7 +304,13 @@ function TicketCard({
 
   return (
     <div className="ticket">
-      <div className={`card ticket-grid status-${it.status}`}>
+      <div 
+        className={`card ticket-grid status-${it.status}${it.status === 'open' && it.isUrgent ? ' urgent-ticket' : ''}`}
+        style={it.status === 'open' && it.isUrgent ? {
+          backgroundColor: '#fee',
+          boxShadow: '0 2px 8px rgba(255, 0, 0, 0.2)'
+        } : undefined}
+      >
           <div className="avatar-col">
           <div
             // status-dot now reflects the ticket status (not agent activity)
@@ -314,7 +321,10 @@ function TicketCard({
 
         <div>
           <div className="card-head">
-            <div className="sender"><span>Temsilci : </span>{sender}</div>
+            <div className="sender">
+              {it.isUrgent && it.status !== 'resolved' && <span style={{ color: '#f44', marginRight: 8, fontWeight: 'bold' }}>🔴 ACİL</span>}
+              <span>Temsilci : </span>{sender}
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="inline-muted">{timeAgo(it.assignedAt)}</span>
               <StatusBadge status={it.status} />
@@ -539,6 +549,17 @@ export default function Tickets() {
       .then(setAgents)
       .catch(() => setAgents([]));
   }, []);
+
+  // Real-time bildirimler - yeni ticket geldiğinde sayfayı güncelle
+  useNotifications((data) => {
+    console.log('[Tickets] New ticket received via socket:', data);
+    // Kullanıcı ID'sini kaydet
+    if (user?.id) {
+      localStorage.setItem('userId', user.id);
+    }
+    // Sayfayı yenile
+    refresh();
+  });
 
   // İlk girişte reported ve waiting ticket'ları kontrol et
   useEffect(() => {

@@ -29,3 +29,14 @@ export async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
 api.get = async function<T>(path: string, opts?: RequestInit): Promise<T> {
   return api<T>(path, { ...opts, method: 'GET' });
 };
+
+// Business Setup API functions
+export const businessSetupAPI = {
+  getAll: () => api<any[]>('/business-setup', { method: 'GET' }),
+  create: (data: { memberId: string; status: string; description: string }) =>
+    api<any>('/business-setup', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: { memberId?: string; status?: string; description?: string }) =>
+    api<any>(`/business-setup/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  delete: (id: string) =>
+    api<{ message: string }>(`/business-setup/${id}`, { method: 'DELETE' }),
+};
