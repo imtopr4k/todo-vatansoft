@@ -404,9 +404,50 @@ bot.on('message', async (ctx) => {
 // Inline butonlar
 console.log('[bot] Registering callback_query handler');
 bot.on('callback_query', async (ctx) => {
+  console.log('[bot] === CALLBACK QUERY RECEIVED ===');
   const data = ('data' in ctx.callbackQuery) ? String(ctx.callbackQuery.data) : '';
+  console.log('[bot] callback_data:', data);
   const [kind, ticketId] = data.split(':');
-  await ctx.answerCbQuery();
+  console.log('[bot] kind:', kind, 'ticketId:', ticketId);
+  
+  if (kind === 'urgent' && ticketId) {
+    console.log('[bot] Processing urgent callback for ticket:', ticketId);
+    try {
+      const url = `${env.API_BASE_URL}/bot/tickets/${ticketId}/mark-urgent`;
+      console.log('[bot] Calling API:', url);
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      console.log('[bot] API response status:', res.status);
+      if (res.ok) {
+        await ctx.answerCbQuery('✅ Görev acil olarak işaretlendi!');
+        console.log('[bot] Answered callback query successfully');
+        // Buton metnini güncelle
+        if ('message' in ctx.callbackQuery && ctx.callbackQuery.message) {
+          await ctx.telegram.editMessageReplyMarkup(
+            ctx.callbackQuery.message.chat.id,
+            ctx.callbackQuery.message.message_id,
+            undefined,
+            {
+              inline_keyboard: [[{ text: '✅ Acil işaretlendi', callback_data: 'noop' }]]
+            }
+          );
+          console.log('[bot] Updated button text');
+        }
+      } else {
+        const errorText = await res.text();
+        console.error('[bot] API error:', errorText);
+        await ctx.answerCbQuery('❌ Hata oluştu!');
+      }
+    } catch (e) {
+      console.error('[bot] urgent callback error:', e);
+      await ctx.answerCbQuery('❌ Bağlantı hatası!');
+    }
+  } else {
+    await ctx.answerCbQuery();
+  }
 });
 
 // Bot'u başlat

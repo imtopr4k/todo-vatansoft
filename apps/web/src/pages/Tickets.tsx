@@ -6,6 +6,7 @@ import { me } from '../auth';
 import Header from '../Components/Header';
 import { Modal } from '../Components/Modal';
 import ChatModal from '../Components/ChatModal';
+import { useNotifications } from '../hooks/useNotifications';
 
 // Yanıp sönme animasyonu için style
 const blinkStyle = document.createElement('style');
@@ -303,7 +304,13 @@ function TicketCard({
 
   return (
     <div className="ticket">
-      <div className={`card ticket-grid status-${it.status}`}>
+      <div 
+        className={`card ticket-grid status-${it.status}${it.status === 'open' && it.isUrgent ? ' urgent-ticket' : ''}`}
+        style={it.status === 'open' && it.isUrgent ? {
+          backgroundColor: '#fee',
+          boxShadow: '0 2px 8px rgba(255, 0, 0, 0.2)'
+        } : undefined}
+      >
           <div className="avatar-col">
           <div
             // status-dot now reflects the ticket status (not agent activity)
@@ -314,7 +321,10 @@ function TicketCard({
 
         <div>
           <div className="card-head">
-            <div className="sender"><span>Temsilci : </span>{sender}</div>
+            <div className="sender">
+              {it.isUrgent && it.status !== 'resolved' && <span style={{ color: '#f44', marginRight: 8, fontWeight: 'bold' }}>🔴 ACİL</span>}
+              <span>Temsilci : </span>{sender}
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span className="inline-muted">{timeAgo(it.assignedAt)}</span>
               <StatusBadge status={it.status} />
@@ -539,6 +549,17 @@ export default function Tickets() {
       .then(setAgents)
       .catch(() => setAgents([]));
   }, []);
+
+  // Real-time bildirimler - yeni ticket geldiğinde sayfayı güncelle
+  useNotifications((data) => {
+    console.log('[Tickets] New ticket received via socket:', data);
+    // Kullanıcı ID'sini kaydet
+    if (user?.id) {
+      localStorage.setItem('userId', user.id);
+    }
+    // Sayfayı yenile
+    refresh();
+  });
 
   // İlk girişte reported ve waiting ticket'ları kontrol et
   useEffect(() => {
@@ -989,12 +1010,21 @@ function refresh() {
     visibleItems = visibleItems.filter((it) => String(it.status) === String(status));
   }
   // apply agent filter client-side for supervisors
-  const filteredItems = agentFilter
+  let filteredItems = agentFilter
     ? visibleItems.filter((it) => {
         const aid = typeof it.assignedTo === 'string' ? it.assignedTo : (it.assignedTo as any)?.id;
         return String(aid) === String(agentFilter);
       })
     : visibleItems;
+  
+  // Acil kartları en üste getir
+  filteredItems = filteredItems.sort((a, b) => {
+    // İlk önce isUrgent'e göre sırala (acil olanlar üstte)
+    if (a.isUrgent && !b.isUrgent) return -1;
+    if (!a.isUrgent && b.isUrgent) return 1;
+    // Eğer ikisi de acil veya ikisi de değilse, orijinal sırayı koru
+    return 0;
+  });
 
   return (
     <>
@@ -1104,6 +1134,7 @@ function refresh() {
         <div className="layout">
           <aside className="sidebar">
             <div style={{ marginBottom: 12, fontWeight: 800 }}>Filtreler</div>
+            
             <div className={`filter-section ${openAra ? 'open' : ''}`}>
               <div className="filter-header" onClick={() => setOpenAra((v) => !v)} role="button" tabIndex={0}>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>Ara</div>
@@ -1111,6 +1142,18 @@ function refresh() {
               </div>
               <div className="filter-content" style={{ display: openAra ? 'block' : 'none' }}>
                 <input className="input" placeholder="Ara isim, mesaj, agent" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+              </div>
+            </div>
+                        <div className={`filter-section ${openKapsam ? 'open' : ''}`}>
+              <div className="filter-header" onClick={() => setOpenKapsam((v) => !v)} role="button" tabIndex={0}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Kapsam</div>
+                <div className={`chev ${openKapsam ? 'open' : ''}`} />
+              </div>
+              <div className="filter-content" style={{ display: openKapsam ? 'block' : 'none' }}>
+                <div className="toggle" style={{ width: '100%' }}>
+                  <button className={`seg-btn ${scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(true); setPage(1); }}>Benim</button>
+                  <button className={`seg-btn ${!scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(false); setPage(1); }} disabled={!isSupervisor}>Tümü</button>
+                </div>
               </div>
             </div>
             <div className={`filter-section ${openDurum ? 'open' : ''}`}>
@@ -1170,19 +1213,6 @@ function refresh() {
                       <div className="inline-muted">{a.externalUserId}</div>
                     </button>
                   ))}
-                </div>
-              </div>
-            </div>
-
-            <div className={`filter-section ${openKapsam ? 'open' : ''}`}>
-              <div className="filter-header" onClick={() => setOpenKapsam((v) => !v)} role="button" tabIndex={0}>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>Kapsam</div>
-                <div className={`chev ${openKapsam ? 'open' : ''}`} />
-              </div>
-              <div className="filter-content" style={{ display: openKapsam ? 'block' : 'none' }}>
-                <div className="toggle" style={{ width: '100%' }}>
-                  <button className={`seg-btn ${scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(true); setPage(1); }}>Benim</button>
-                  <button className={`seg-btn ${!scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(false); setPage(1); }} disabled={!isSupervisor}>Tümü</button>
                 </div>
               </div>
             </div>

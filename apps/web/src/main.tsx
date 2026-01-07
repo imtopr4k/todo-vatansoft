@@ -8,6 +8,7 @@ import Chat from './pages/Chat';
 import Stats from './pages/Stats';
 import Analysis from './pages/Analysis';
 import Logs from './pages/Logs';
+import BusinessSetup from './pages/BusinessSetup';
 import { me } from './auth';
 import './styles.css';
 
@@ -27,6 +28,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/stats" element={<RequireAuth><Stats/></RequireAuth>} />
   <Route path="/analysis" element={<RequireAuth><Analysis/></RequireAuth>} />
         <Route path="/logs" element={<RequireAuth><Logs/></RequireAuth>} />
+        <Route path="/business-setup" element={<RequireAuth><BusinessSetup/></RequireAuth>} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>

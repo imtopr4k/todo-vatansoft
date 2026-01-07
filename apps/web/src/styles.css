@@ -134,6 +134,7 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:Inter, ui-sans-
 .ticket .card.status-unreachable::before{background:linear-gradient(180deg,var(--danger),#ff8a80)}
 .ticket .card.status-resolved::before{background:linear-gradient(180deg,var(--success),#34d399)}
 .ticket .card.status-open::before{background:linear-gradient(180deg,var(--accent),var(--accent-2))}
+.ticket .card.status-open.urgent-ticket::before{background:linear-gradient(180deg,var(--danger),red)}
 .ticket .card.status-reported::before{background:linear-gradient(180deg,var(--accent),#8b5cf6)}
 
 .ticket .card.status-unreachable{border-color: rgba(239,68,68,0.12); box-shadow:0 12px 32px rgba(239,68,68,0.06)}

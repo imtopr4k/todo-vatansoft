@@ -16,4 +16,24 @@ export interface Ticket {
     interestedBy?: string;
     interestedAt?: string;
     updatedAt?: string;
+    isUrgent?: boolean;
+}
+
+export interface BusinessSetup {
+    id: string;
+    memberId: string;
+    status: string;
+    description: string;
+    createdBy?: {
+        id: string;
+        name: string;
+        externalUserId: string;
+    };
+    updatedBy?: {
+        id: string;
+        name: string;
+        externalUserId: string;
+    };
+    createdAt?: string;
+    updatedAt?: string;
 }

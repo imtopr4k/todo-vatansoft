@@ -40,7 +40,8 @@ r.get('/:id', async (req, res) => {
       interestedBy: ticket.interestedBy ? String(ticket.interestedBy) : undefined,
       interestedAt: ticket.interestedAt,
       updatedAt: ticket.updatedAt,
-      createdAt: ticket.createdAt
+      createdAt: ticket.createdAt,
+      isUrgent: ticket.isUrgent
     };
 
     return res.json(result);
@@ -115,6 +116,7 @@ r.get('/', async (req, res) => {
       interestedBy: t.interestedBy ? String(t.interestedBy) : undefined,
       interestedAt: t.interestedAt,
       updatedAt: t.updatedAt,
+      isUrgent: t.isUrgent
     }));
 
     return res.json({
@@ -142,6 +144,7 @@ r.post('/:id/resolve', async (req, res) => {
     const prevStatus = t.status;
     t.status = 'resolved';
     t.resolutionText = msg;
+    t.isUrgent = false;
     await t.save();
 
     try {
@@ -784,8 +787,10 @@ r.post('/:id/waiting', async (req, res) => {
       return res.status(403).json({ message: 'Not your ticket' });
     }
 
-    // Durumu 'waiting' olarak işaretle
+    // Durumu 'waiting' olarak işaretle ve resolutionText'i güncelle
     t.status = 'waiting';
+    const msg = String((message ?? '')).trim();
+    t.resolutionText = msg || 'Lütfen eksik bilgileri tamamlayınız.';
     await t.save();
 
     // Kullanıcıya DM gönder

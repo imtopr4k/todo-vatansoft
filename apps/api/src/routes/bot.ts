@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { Ticket } from '../models/Ticket';
 import { assignAgentForMessage } from '../services/assigner';
-import { sendReply } from '../services/telegram';
+import { sendReply, sendDM } from '../services/telegram';
 import { Agent } from '../models/Agent';
 
 const r = Router();
@@ -70,8 +70,60 @@ r.post('/intake', async (req, res) => {
     status: 'open'
   });
 
+  // Gruba sadece bilgilendirme mesajı gönder (buton YOK)
   await sendReply(chatId, messageId, `Görev ${chosen.name}'e atandı.`);
+  
+  // Real-time bildirim gönder
+  try {
+    const io = (global as any).io;
+    if (io) {
+      io.emit('new_ticket', {
+        ticketId: String(t._id),
+        assignedTo: chosen.id,
+        assignedToName: chosen.name,
+        text: text,
+        from: from?.displayName || 'Bilinmiyor',
+        isUrgent: false,
+        status: 'open',
+        createdAt: new Date().toISOString()
+      });
+      console.log('[socket] Emitted new_ticket:', String(t._id));
+    }
+  } catch (err) {
+    console.error('[socket] Failed to emit new_ticket:', err);
+  }
+  
+  // Kullanıcıya özelden acil butonu gönder
+  if (from?.id) {
+    try {
+      const userMessage = `📋 Talebiniz alındı ve ${chosen.name}'e atandı.\n\nEğer bu talep acilse, aşağıdaki butona tıklayarak işaretleyebilirsiniz:`;
+      await sendDM(from.id, userMessage, [
+        [{ text: '🔴 Acil mi?', callback_data: `urgent:${String(t._id)}` }]
+      ]);
+    } catch (err) {
+      console.error('[bot] Failed to send urgent button to user:', err);
+    }
+  }
+  
   res.json({ ticketId: String(t._id) });
+});
+
+r.post('/tickets/:ticketId/mark-urgent', async (req, res) => {
+  const { ticketId } = req.params;
+  console.log('[API] mark-urgent called for ticket:', ticketId);
+  
+  const t = await Ticket.findById(ticketId);
+  if (!t) {
+    console.log('[API] Ticket not found:', ticketId);
+    return res.status(404).json({ message: 'Ticket bulunamadı' });
+  }
+  
+  console.log('[API] Before update - isUrgent:', t.isUrgent);
+  t.isUrgent = true;
+  await t.save();
+  console.log('[API] After update - isUrgent:', t.isUrgent);
+  
+  return res.json({ ok: true });
 });
 
 r.post('/ping', (req, res) => {

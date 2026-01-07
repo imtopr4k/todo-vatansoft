@@ -11,6 +11,7 @@ import botRoutes from './routes/bot';
 import adminRouter from './routes/admin';
 import logsRouter from './routes/logs';
 import chatRouter from './routes/chat';
+import businessSetupRouter from './routes/businessSetup';
 import { initScheduler } from './services/scheduler';
 import { createHealthRouter } from './services/healthCheck';
 
@@ -56,6 +57,7 @@ import { createHealthRouter } from './services/healthCheck';
   app.use('/tickets', ticketRoutes);
   app.use('/logs', logsRouter);
   app.use('/chat', chatRouter);
+  app.use('/business-setup', businessSetupRouter);
   app.use(express.json());
   app.use('/bot', botRoutes);
   app.get('/debug/db', async (_req, res) => {
@@ -81,9 +83,18 @@ import { createHealthRouter } from './services/healthCheck';
 
   const server = http.createServer(app);
   const io = new SocketIOServer(server, { cors: { origin: '*' } });
-  // const io = new SocketIOServer(server, { cors: { origin: 'http://localhost:5173' } });
-  io.on('connection', () => {
+  
+  // Socket.IO bağlantıları
+  io.on('connection', (socket) => {
+    console.log('[socket] Client connected:', socket.id);
+    
+    socket.on('disconnect', () => {
+      console.log('[socket] Client disconnected:', socket.id);
+    });
   });
+
+  // Socket.IO instance'ı global olarak erişilebilir yap
+  (global as any).io = io;
 
   server.listen(env.PORT, () => console.log(`[api] listening on ${env.PORT}`));
 
