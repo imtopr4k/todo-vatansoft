@@ -1010,12 +1010,21 @@ function refresh() {
     visibleItems = visibleItems.filter((it) => String(it.status) === String(status));
   }
   // apply agent filter client-side for supervisors
-  const filteredItems = agentFilter
+  let filteredItems = agentFilter
     ? visibleItems.filter((it) => {
         const aid = typeof it.assignedTo === 'string' ? it.assignedTo : (it.assignedTo as any)?.id;
         return String(aid) === String(agentFilter);
       })
     : visibleItems;
+  
+  // Acil kartları en üste getir
+  filteredItems = filteredItems.sort((a, b) => {
+    // İlk önce isUrgent'e göre sırala (acil olanlar üstte)
+    if (a.isUrgent && !b.isUrgent) return -1;
+    if (!a.isUrgent && b.isUrgent) return 1;
+    // Eğer ikisi de acil veya ikisi de değilse, orijinal sırayı koru
+    return 0;
+  });
 
   return (
     <>
@@ -1125,6 +1134,7 @@ function refresh() {
         <div className="layout">
           <aside className="sidebar">
             <div style={{ marginBottom: 12, fontWeight: 800 }}>Filtreler</div>
+            
             <div className={`filter-section ${openAra ? 'open' : ''}`}>
               <div className="filter-header" onClick={() => setOpenAra((v) => !v)} role="button" tabIndex={0}>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>Ara</div>
@@ -1132,6 +1142,18 @@ function refresh() {
               </div>
               <div className="filter-content" style={{ display: openAra ? 'block' : 'none' }}>
                 <input className="input" placeholder="Ara isim, mesaj, agent" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} />
+              </div>
+            </div>
+                        <div className={`filter-section ${openKapsam ? 'open' : ''}`}>
+              <div className="filter-header" onClick={() => setOpenKapsam((v) => !v)} role="button" tabIndex={0}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Kapsam</div>
+                <div className={`chev ${openKapsam ? 'open' : ''}`} />
+              </div>
+              <div className="filter-content" style={{ display: openKapsam ? 'block' : 'none' }}>
+                <div className="toggle" style={{ width: '100%' }}>
+                  <button className={`seg-btn ${scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(true); setPage(1); }}>Benim</button>
+                  <button className={`seg-btn ${!scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(false); setPage(1); }} disabled={!isSupervisor}>Tümü</button>
+                </div>
               </div>
             </div>
             <div className={`filter-section ${openDurum ? 'open' : ''}`}>
@@ -1191,19 +1213,6 @@ function refresh() {
                       <div className="inline-muted">{a.externalUserId}</div>
                     </button>
                   ))}
-                </div>
-              </div>
-            </div>
-
-            <div className={`filter-section ${openKapsam ? 'open' : ''}`}>
-              <div className="filter-header" onClick={() => setOpenKapsam((v) => !v)} role="button" tabIndex={0}>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>Kapsam</div>
-                <div className={`chev ${openKapsam ? 'open' : ''}`} />
-              </div>
-              <div className="filter-content" style={{ display: openKapsam ? 'block' : 'none' }}>
-                <div className="toggle" style={{ width: '100%' }}>
-                  <button className={`seg-btn ${scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(true); setPage(1); }}>Benim</button>
-                  <button className={`seg-btn ${!scopeMine ? 'active' : ''}`} onClick={() => { setScopeMine(false); setPage(1); }} disabled={!isSupervisor}>Tümü</button>
                 </div>
               </div>
             </div>

@@ -787,8 +787,10 @@ r.post('/:id/waiting', async (req, res) => {
       return res.status(403).json({ message: 'Not your ticket' });
     }
 
-    // Durumu 'waiting' olarak işaretle
+    // Durumu 'waiting' olarak işaretle ve resolutionText'i güncelle
     t.status = 'waiting';
+    const msg = String((message ?? '')).trim();
+    t.resolutionText = msg || 'Lütfen eksik bilgileri tamamlayınız.';
     await t.save();
 
     // Kullanıcıya DM gönder
