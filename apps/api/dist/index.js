@@ -49,6 +49,7 @@ const bot_1 = __importDefault(require("./routes/bot"));
 const admin_1 = __importDefault(require("./routes/admin"));
 const logs_1 = __importDefault(require("./routes/logs"));
 const chat_1 = __importDefault(require("./routes/chat"));
+const businessSetup_1 = __importDefault(require("./routes/businessSetup"));
 const scheduler_1 = require("./services/scheduler");
 const healthCheck_1 = require("./services/healthCheck");
 (async () => {
@@ -89,11 +90,15 @@ const healthCheck_1 = require("./services/healthCheck");
     app.use('/tickets', tickets_1.default);
     app.use('/logs', logs_1.default);
     app.use('/chat', chat_1.default);
+    app.use('/business-setup', businessSetup_1.default);
     app.use(express_1.default.json());
     app.use('/bot', bot_1.default);
     app.get('/debug/db', async (_req, res) => {
         const mongoose = (await Promise.resolve().then(() => __importStar(require('mongoose')))).default;
         const db = mongoose.connection.db;
+        if (!db) {
+            return res.status(500).json({ message: 'Database not connected' });
+        }
         const colls = await db.listCollections().toArray();
         res.json({
             mongoUri: process.env.MONGO_URI,
@@ -109,9 +114,15 @@ const healthCheck_1 = require("./services/healthCheck");
     });
     const server = http_1.default.createServer(app);
     const io = new socket_io_1.Server(server, { cors: { origin: '*' } });
-    // const io = new SocketIOServer(server, { cors: { origin: 'http://localhost:5173' } });
-    io.on('connection', () => {
+    // Socket.IO bağlantıları
+    io.on('connection', (socket) => {
+        console.log('[socket] Client connected:', socket.id);
+        socket.on('disconnect', () => {
+            console.log('[socket] Client disconnected:', socket.id);
+        });
     });
+    // Socket.IO instance'ı global olarak erişilebilir yap
+    global.io = io;
     server.listen(env_1.env.PORT, () => console.log(`[api] listening on ${env_1.env.PORT}`));
     // Crash durumunda yeniden başlatma
     process.on('uncaughtException', (error) => {

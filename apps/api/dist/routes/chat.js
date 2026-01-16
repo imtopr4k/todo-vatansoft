@@ -14,7 +14,7 @@ r.post('/register-user', async (req, res) => {
         const { userId, chatId, firstName, lastName, username } = req.body;
         // Kullanıcının aktif bir ticket'ı varsa, chatId'sini güncelle
         const ticket = await Ticket_1.Ticket.findOne({ 'telegram.from.id': Number(userId) }).sort({ createdAt: -1 });
-        if (ticket && !ticket.telegram.userChatId) {
+        if (ticket && ticket.telegram && !ticket.telegram.userChatId) {
             ticket.telegram.userChatId = chatId;
             await ticket.save();
         }
@@ -37,7 +37,7 @@ r.post('/send-message', auth_1.requireAuth, async (req, res) => {
         if (!ticket) {
             return res.status(404).json({ message: 'Ticket not found' });
         }
-        const userChatId = ticket.telegram.userChatId;
+        const userChatId = ticket.telegram?.userChatId;
         if (!userChatId) {
             return res.status(400).json({ message: 'User has not started bot yet. Ask them to send /start to the bot.' });
         }
@@ -146,12 +146,12 @@ r.get('/users', auth_1.requireAuth, async (req, res) => {
             });
             return {
                 ticketId: ticket._id,
-                userId: ticket.telegram.from.id,
-                userName: ticket.telegram.from.displayName || ticket.telegram.from.username || `User ${ticket.telegram.from.id}`,
-                username: ticket.telegram.from.username,
-                firstName: ticket.telegram.from.firstName,
-                lastName: ticket.telegram.from.lastName,
-                userChatId: ticket.telegram.userChatId,
+                userId: ticket.telegram?.from?.id,
+                userName: ticket.telegram?.from?.displayName || ticket.telegram?.from?.username || `User ${ticket.telegram?.from?.id}`,
+                username: ticket.telegram?.from?.username,
+                firstName: ticket.telegram?.from?.firstName,
+                lastName: ticket.telegram?.from?.lastName,
+                userChatId: ticket.telegram?.userChatId,
                 assignedTo: ticket.assignedTo?.name || 'Atanmamış',
                 status: ticket.status,
                 lastMessage: lastMessage ? {
@@ -235,8 +235,7 @@ r.get('/direct-users', auth_1.requireAuth, async (req, res) => {
                 ticket: ticket ? {
                     ticketId: ticket._id,
                     status: ticket.status,
-                    assignedTo: ticket.assignedTo?.name || 'Atanmamış',
-                    detay: ticket.detay
+                    assignedTo: ticket.assignedTo?.name || 'Atanmamış'
                 } : null
             };
         }));

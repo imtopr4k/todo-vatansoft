@@ -55,7 +55,7 @@ r.get('/', async (req, res) => {
   try {
     const auth = (req as any).auth as { sub: string; role: 'agent' | 'supervisor' };
 
-    let { assignedTo, status, q, page, limit, sort } = req.query as any;
+    let { assignedTo, status, q, page, limit, sort, createdAfter } = req.query as any;
 
     assignedTo = (assignedTo === 'me' || assignedTo === 'all')
       ? assignedTo
@@ -74,6 +74,18 @@ r.get('/', async (req, res) => {
 
     if (auth.role === 'agent' || assignedTo === 'me') {
       query.assignedTo = auth.sub;
+    }
+
+    // createdAfter filtresi
+    if (createdAfter) {
+      try {
+        const date = new Date(createdAfter);
+        if (!isNaN(date.getTime())) {
+          query.createdAt = { $gte: date };
+        }
+      } catch (e) {
+        // Geçersiz tarih formatı, yoksay
+      }
     }
 
     if (q && String(q).trim()) {
@@ -145,6 +157,17 @@ r.post('/:id/resolve', async (req, res) => {
     t.status = 'resolved';
     t.resolutionText = msg;
     t.isUrgent = false;
+    
+    // History'ye log ekle
+    t.history = t.history || [];
+    const actor = await Agent.findById(auth.sub).lean();
+    t.history.push({
+      at: new Date(),
+      byAgentId: auth.sub,
+      action: 'resolved',
+      note: `${actor?.name || 'Agent'} tarafından çözümlendi${prevStatus !== 'open' ? ` (${prevStatus} => resolved)` : ''}`
+    });
+    
     await t.save();
 
     try {
@@ -195,6 +218,17 @@ r.post('/:id/report', async (req, res) => {
     const msg = String((resolutionText ?? '')).trim();
     t.status = 'reported';
     t.resolutionText = msg;
+    
+    // History'ye log ekle
+    t.history = t.history || [];
+    const actor = await Agent.findById(auth.sub).lean();
+    t.history.push({
+      at: new Date(),
+      byAgentId: auth.sub,
+      action: 'reported',
+      note: `${actor?.name || 'Agent'} tarafından yazılıma iletildi`
+    });
+    
     await t.save();
 
     // Send a group reply to the original telegram message to notify that it was reported
@@ -448,6 +482,16 @@ r.post('/:id/unreachable', async (req, res) => {
     const msg = String((resolutionText ?? '')).trim();
     t.status = 'unreachable';
     t.resolutionText = msg;
+    
+    // History'ye log ekle
+    t.history = t.history || [];
+    const actor = await Agent.findById(auth.sub).lean();
+    t.history.push({
+      at: new Date(),
+      byAgentId: auth.sub,
+      action: 'unreachable',
+      note: `${actor?.name || 'Agent'} tarafından ulaşılamadı olarak işaretlendi`
+    });
 
     // Grup mesajını hemen gönder
     try {
@@ -646,12 +690,18 @@ r.put('/:id/assign', async (req, res) => {
   t.assignedAt = new Date();
   // push history
   t.history = t.history || [];
-  t.history.push({ at: new Date(), byAgentId: requester?._id, action: 'reassign', note: `from ${String(fromAgent?._id || '—')} to ${String(toAgent._id)}` });
+  const fromName = fromAgent?.name || 'Atanmamış';
+  const toName = toAgent.name || 'Bilinmiyor';
+  const requesterName = requester?.name || 'Sistem';
+  t.history.push({ 
+    at: new Date(), 
+    byAgentId: requester?._id, 
+    action: 'reassign', 
+    note: `${fromName} => ${toName} olarak atandı. İşlemi yapan: ${requesterName}` 
+  });
   await t.save();
 
-    // Telegram’a bildir (orijinal mesaja reply)
-    const fromName = fromAgent?.name || '—';
-    const toName = toAgent.name || '—';
+    // Telegram'a bildir (orijinal mesaja reply)
     const notifyBase = `Görev el değiştirdi\n${fromName} => ${toName}`;
     try {
       if (t.telegram?.chatId && t.telegram?.messageId) {
@@ -718,6 +768,17 @@ r.post('/:id/interested', async (req, res) => {
 
     t.interestedBy = auth.sub;
     t.interestedAt = new Date();
+    
+    // History'ye log ekle
+    t.history = t.history || [];
+    const actor = await Agent.findById(auth.sub).lean();
+    t.history.push({
+      at: new Date(),
+      byAgentId: auth.sub,
+      action: 'interested',
+      note: `${actor?.name || 'Agent'} ilgilenmeye başladı`
+    });
+    
     await t.save();
 
     // Telegram mesajına reaction (like) ekle
@@ -791,6 +852,17 @@ r.post('/:id/waiting', async (req, res) => {
     t.status = 'waiting';
     const msg = String((message ?? '')).trim();
     t.resolutionText = msg || 'Lütfen eksik bilgileri tamamlayınız.';
+    
+    // History'ye log ekle
+    t.history = t.history || [];
+    const actor = await Agent.findById(auth.sub).lean();
+    t.history.push({
+      at: new Date(),
+      byAgentId: auth.sub,
+      action: 'waiting',
+      note: `${actor?.name || 'Agent'} tarafından üye bekleniyor durumuna alındı`
+    });
+    
     await t.save();
 
     // Kullanıcıya DM gönder

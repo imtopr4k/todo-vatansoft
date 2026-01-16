@@ -67,11 +67,34 @@ r.post('/intake', async (req, res) => {
     },
     assignedTo: chosen.id,
     assignedAt: new Date(),
-    status: 'open'
+    status: 'open',
+    history: [{
+      at: new Date(),
+      action: 'created',
+      note: `Görev oluşturuldu ve ${chosen.name}'e atandı`
+    }]
   });
 
+  // Kısa ID hesapla (son 6 karakter)
+  const shortId = String(t._id).slice(-6).toUpperCase();
+
   // Gruba sadece bilgilendirme mesajı gönder (buton YOK)
-  await sendReply(chatId, messageId, `Görev ${chosen.name}'e atandı.`);
+  await sendReply(chatId, messageId, `#${shortId} - Görev ${chosen.name}'e atandı.`);
+  
+  // Atanan kişiye özelden DM gönder
+  try {
+    const assignedAgent = await Agent.findById(chosen.id).lean();
+    if (assignedAgent?.telegramUserId) {
+      const senderName = from?.displayName || from?.firstName || from?.username || 'Bilinmiyor';
+      const dmMessage = `🆕 Yeni Görev Atandı!\n\n📋 Görev ID: #${shortId}\n👤 Gönderen: ${senderName}\n\n💬 Mesaj:\n${text || '(Mesaj içeriği yok)'}\n\n📌 Lütfen en kısa sürede ilgilenin.`;
+      await sendDM(assignedAgent.telegramUserId, dmMessage);
+      console.log(`[bot] DM sent to assigned agent ${chosen.name} (${assignedAgent.telegramUserId})`);
+    } else {
+      console.log(`[bot] Agent ${chosen.name} has no telegramUserId, skipping DM`);
+    }
+  } catch (dmErr) {
+    console.error('[bot] Failed to send DM to assigned agent:', dmErr);
+  }
   
   // Real-time bildirim gönder
   try {

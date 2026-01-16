@@ -85,10 +85,15 @@ function createHealthRouter() {
     const r = (0, express_1.Router)();
     r.get('/health', async (_req, res) => {
         const health = await getSystemHealth();
-        const allUp = health.api.status === 'up' &&
-            health.bot.status === 'up' &&
-            health.database.status === 'up';
-        res.status(allUp ? 200 : 503).json(health);
+        // Sadece API'nin ayakta olduğunu kontrol et, bot ve db sorunları warning olsun
+        res.status(200).json({
+            ...health,
+            overallStatus: health.api.status === 'up' ? 'healthy' : 'unhealthy',
+            warnings: [
+                health.bot.status === 'down' ? 'Bot is not responding' : null,
+                health.database.status === 'down' ? 'Database connection is down' : null
+            ].filter(Boolean)
+        });
     });
     r.post('/bot/ping', (_req, res) => {
         updateBotPing();

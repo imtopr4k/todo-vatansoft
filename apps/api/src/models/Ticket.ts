@@ -23,6 +23,7 @@ const TicketSchema = new Schema({
   isUrgent: { type: Boolean, default: false },
   resolutionText: { type: String },
   scheduledDMAt: { type: Date },
+  unattendedWarningAt: { type: Date },                           // 5dk uyarısı gönderildi mi
   interestedBy: { type: Types.ObjectId, ref: 'Agent' },
   interestedAt: { type: Date },
   // Analysis data: agents can record difficulty and notes for the ticket
