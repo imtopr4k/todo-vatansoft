@@ -53,7 +53,8 @@ r.get('/:id', async (req, res) => {
             return res.status(404).json({ message: 'Ticket not found' });
         }
         // Sadece kendi ticket'ını veya supervisor tüm ticket'ları görebilir
-        if (auth.role !== 'supervisor' && String(ticket.assignedTo?._id || ticket.assignedTo) !== auth.sub) {
+        const assignedToId = ticket.assignedTo?._id || ticket.assignedTo;
+        if (auth.role !== 'supervisor' && String(assignedToId) !== auth.sub) {
             return res.status(403).json({ message: 'Not authorized' });
         }
         const result = {
@@ -68,7 +69,8 @@ r.get('/:id', async (req, res) => {
             interestedBy: ticket.interestedBy ? String(ticket.interestedBy) : undefined,
             interestedAt: ticket.interestedAt,
             updatedAt: ticket.updatedAt,
-            createdAt: ticket.createdAt
+            createdAt: ticket.createdAt,
+            isUrgent: ticket.isUrgent
         };
         return res.json(result);
     }
@@ -133,6 +135,7 @@ r.get('/', async (req, res) => {
             interestedBy: t.interestedBy ? String(t.interestedBy) : undefined,
             interestedAt: t.interestedAt,
             updatedAt: t.updatedAt,
+            isUrgent: t.isUrgent
         }));
         return res.json({
             items, page, limit, total,
@@ -158,6 +161,16 @@ r.post('/:id/resolve', async (req, res) => {
         const prevStatus = t.status;
         t.status = 'resolved';
         t.resolutionText = msg;
+        t.isUrgent = false;
+        // History'ye log ekle
+        t.history = t.history || [];
+        const actor = await Agent_1.Agent.findById(auth.sub).lean();
+        t.history.push({
+            at: new Date(),
+            byAgentId: auth.sub,
+            action: 'resolved',
+            note: `${actor?.name || 'Agent'} tarafından çözümlendi${prevStatus !== 'open' ? ` (${prevStatus} => resolved)` : ''}`
+        });
         await t.save();
         try {
             // If transitioning from unreachable or reported -> resolved, show transition
@@ -167,10 +180,15 @@ r.post('/:id/resolve', async (req, res) => {
             }
             const final = `${msg || 'Çözümlendi'}${signature ? '\n\n-' + signature : ''}`;
             // Gruba yanıt gönder
-            await (0, telegram_1.sendReply)(t.telegram.chatId, t.telegram.messageId, final);
+            if (t.telegram?.chatId && t.telegram?.messageId) {
+                await (0, telegram_1.sendReply)(t.telegram.chatId, t.telegram.messageId, final);
+            }
             // Kullanıcıya özel mesaj gönder
             if (t.telegram?.from?.id) {
-                const userMessage = `✅ Talebiniz çözümlendi!\n\n📝 Detay: ${msg || 'Sorun giderildi.'}\n\nℹ️ Herhangi bir sorunuz varsa bizimle iletişime geçebilirsiniz.`;
+                const actor = await Agent_1.Agent.findById(auth.sub).lean();
+                const actorName = actor?.name || 'Destek Ekibi';
+                const originalText = t.telegram?.text || 'Mesaj metni bulunamadı';
+                const userMessage = `✅ Talebiniz Çözümlendi\n\n📋 Talebiniz:\n${originalText}\n\n💬 Çözüm Notu:\n${msg || 'Sorun giderildi.'}\n\n👤 İşlemi Yapan: ${actorName}\n📊 Durum: Çözümlendi`;
                 await (0, telegram_1.sendDM)(t.telegram.from.id, userMessage);
             }
         }
@@ -198,6 +216,15 @@ r.post('/:id/report', async (req, res) => {
         const msg = String((resolutionText ?? '')).trim();
         t.status = 'reported';
         t.resolutionText = msg;
+        // History'ye log ekle
+        t.history = t.history || [];
+        const actor = await Agent_1.Agent.findById(auth.sub).lean();
+        t.history.push({
+            at: new Date(),
+            byAgentId: auth.sub,
+            action: 'reported',
+            note: `${actor?.name || 'Agent'} tarafından yazılıma iletildi`
+        });
         await t.save();
         // Send a group reply to the original telegram message to notify that it was reported
         try {
@@ -208,7 +235,10 @@ r.post('/:id/report', async (req, res) => {
                 await (0, telegram_1.sendReply)(t.telegram.chatId, t.telegram.messageId, final);
                 // Kullanıcıya özel mesaj gönder
                 if (t.telegram?.from?.id) {
-                    const userMessage = `📤 Talebiniz yazılım ekibine iletildi.\n\n📝 Detay: ${msg || 'Konunuz yazılım departmanına yönlendirildi.'}\n\n⏳ En kısa sürede dönüş sağlanacaktır.`;
+                    const actor = await Agent_1.Agent.findById(auth.sub).lean();
+                    const actorName = actor?.name || 'Destek Ekibi';
+                    const originalText = t.telegram?.text || 'Mesaj metni bulunamadı';
+                    const userMessage = `📤 Talebiniz Yazılım Ekibine İletildi\n\n📋 Talebiniz:\n${originalText}\n\n💬 Not:\n${msg || 'Konunuz yazılım departmanına yönlendirildi.'}\n\n👤 İşlemi Yapan: ${actorName}\n📊 Durum: Yazılıma İletildi`;
                     await (0, telegram_1.sendDM)(t.telegram.from.id, userMessage);
                 }
             }
@@ -283,8 +313,9 @@ r.get('/stats/senders', async (req, res) => {
                 const norm = normalizeProjKey(proj);
                 if (!entry.projects[norm])
                     entry.projects[norm] = { count: 0, variants: {} };
-                entry.projects[norm].count = (entry.projects[norm].count || 0) + 1;
-                entry.projects[norm].variants[proj] = (entry.projects[norm].variants[proj] || 0) + 1;
+                const projEntry = entry.projects[norm];
+                projEntry.count = (projEntry.count || 0) + 1;
+                projEntry.variants[proj] = (projEntry.variants[proj] || 0) + 1;
             }
         }
         const out = Array.from(map.values()).map(v => {
@@ -300,15 +331,17 @@ r.get('/stats/senders', async (req, res) => {
                     continue;
                 merged[k] = { ...projects[k] };
                 // ensure shape
-                merged[k].count = merged[k].count || 0;
-                merged[k].variants = merged[k].variants || {};
+                const mergedEntry = merged[k];
+                mergedEntry.count = mergedEntry.count || 0;
+                mergedEntry.variants = mergedEntry.variants || {};
                 for (const kk of keys) {
                     if (kk === k || used.has(kk))
                         continue;
                     // if kk contains k (longer phrase containing the shorter base), merge kk into k
                     if (kk.includes(k)) {
-                        merged[k].count = (merged[k].count || 0) + (projects[kk].count || 0);
-                        merged[k].variants = { ...(merged[k].variants || {}), ...(projects[kk].variants || {}) };
+                        const projectsEntry = projects[kk];
+                        mergedEntry.count = (mergedEntry.count || 0) + (projectsEntry.count || 0);
+                        mergedEntry.variants = { ...(mergedEntry.variants || {}), ...(projectsEntry.variants || {}) };
                         used.add(kk);
                     }
                 }
@@ -437,6 +470,15 @@ r.post('/:id/unreachable', async (req, res) => {
         const msg = String((resolutionText ?? '')).trim();
         t.status = 'unreachable';
         t.resolutionText = msg;
+        // History'ye log ekle
+        t.history = t.history || [];
+        const actor = await Agent_1.Agent.findById(auth.sub).lean();
+        t.history.push({
+            at: new Date(),
+            byAgentId: auth.sub,
+            action: 'unreachable',
+            note: `${actor?.name || 'Agent'} tarafından ulaşılamadı olarak işaretlendi`
+        });
         // Grup mesajını hemen gönder
         try {
             if (t.telegram?.chatId && t.telegram?.messageId) {
@@ -448,7 +490,8 @@ r.post('/:id/unreachable', async (req, res) => {
                 await (0, telegram_1.sendReply)(t.telegram.chatId, t.telegram.messageId, final);
                 // Kullanıcıya özel mesaj gönder
                 if (t.telegram?.from?.id) {
-                    const userMessage = `📞 Size ulaşmaya çalıştık ancak ulaşamadık.\n\n📝 Not: ${msg || 'WhatsApp üzerinden iletişime geçtik.'}\n\n📱 Lütfen iletişim bilgilerinizi kontrol edin.`;
+                    const originalText = t.telegram?.text || 'Mesaj metni bulunamadı';
+                    const userMessage = `📞 Size Ulaşmaya Çalıştık\n\n📋 Talebiniz:\n${originalText}\n\n💬 Not:\n${msg || 'WhatsApp üzerinden iletişime geçtik.'}\n\n👤 İşlemi Yapan: ${actorName}\n📊 Durum: Ulaşılamadı`;
                     await (0, telegram_1.sendDM)(t.telegram.from.id, userMessage);
                 }
             }
@@ -627,11 +670,17 @@ r.put('/:id/assign', async (req, res) => {
         t.assignedAt = new Date();
         // push history
         t.history = t.history || [];
-        t.history.push({ at: new Date(), byAgentId: requester?._id, action: 'reassign', note: `from ${String(fromAgent?._id || '—')} to ${String(toAgent._id)}` });
+        const fromName = fromAgent?.name || 'Atanmamış';
+        const toName = toAgent.name || 'Bilinmiyor';
+        const requesterName = requester?.name || 'Sistem';
+        t.history.push({
+            at: new Date(),
+            byAgentId: requester?._id,
+            action: 'reassign',
+            note: `${fromName} => ${toName} olarak atandı. İşlemi yapan: ${requesterName}`
+        });
         await t.save();
-        // Telegram’a bildir (orijinal mesaja reply)
-        const fromName = fromAgent?.name || '—';
-        const toName = toAgent.name || '—';
+        // Telegram'a bildir (orijinal mesaja reply)
         const notifyBase = `Görev el değiştirdi\n${fromName} => ${toName}`;
         try {
             if (t.telegram?.chatId && t.telegram?.messageId) {
@@ -695,6 +744,15 @@ r.post('/:id/interested', async (req, res) => {
         }
         t.interestedBy = auth.sub;
         t.interestedAt = new Date();
+        // History'ye log ekle
+        t.history = t.history || [];
+        const actor = await Agent_1.Agent.findById(auth.sub).lean();
+        t.history.push({
+            at: new Date(),
+            byAgentId: auth.sub,
+            action: 'interested',
+            note: `${actor?.name || 'Agent'} ilgilenmeye başladı`
+        });
         await t.save();
         // Telegram mesajına reaction (like) ekle
         try {
@@ -760,16 +818,29 @@ r.post('/:id/waiting', async (req, res) => {
         if (auth.role !== 'supervisor' && String(t.assignedTo) !== auth.sub) {
             return res.status(403).json({ message: 'Not your ticket' });
         }
-        // Durumu 'waiting' olarak işaretle
+        // Durumu 'waiting' olarak işaretle ve resolutionText'i güncelle
         t.status = 'waiting';
+        const msg = String((message ?? '')).trim();
+        t.resolutionText = msg || 'Lütfen eksik bilgileri tamamlayınız.';
+        // History'ye log ekle
+        t.history = t.history || [];
+        const actor = await Agent_1.Agent.findById(auth.sub).lean();
+        t.history.push({
+            at: new Date(),
+            byAgentId: auth.sub,
+            action: 'waiting',
+            note: `${actor?.name || 'Agent'} tarafından üye bekleniyor durumuna alındı`
+        });
         await t.save();
         // Kullanıcıya DM gönder
         const from = t.telegram?.from || {};
         const userId = from.id || from.telegramUserId || null;
         if (userId) {
+            const actor = await Agent_1.Agent.findById(auth.sub).lean();
+            const actorName = actor?.name || 'Destek Ekibi';
             const baseMsg = String((message ?? '').trim()) || 'Lütfen eksik bilgileri tamamlayınız.';
-            const original = t.telegram?.text || '(orijinal mesaj yok)';
-            const text = `${baseMsg}\n\nOrijinal mesaj:\n${original}`;
+            const originalText = t.telegram?.text || 'Mesaj metni bulunamadı';
+            const text = `⏳ Talebiniz İçin Ek Bilgi Bekleniyor\n\n📋 Talebiniz:\n${originalText}\n\n💬 İstek:\n${baseMsg}\n\n👤 İşlemi Yapan: ${actorName}\n📊 Durum: Üye Bekleniyor`;
             try {
                 await (0, telegram_1.sendDM)(Number(userId), text);
             }

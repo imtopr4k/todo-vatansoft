@@ -302,6 +302,9 @@ function TicketCard({
     onInterested(it.id);
   }
 
+  // Kısa ID hesapla (son 6 karakter)
+  const shortId = it.id.slice(-6).toUpperCase();
+
   return (
     <div className="ticket">
       <div 
@@ -322,6 +325,25 @@ function TicketCard({
         <div>
           <div className="card-head">
             <div className="sender">
+              <span 
+                style={{ 
+                  backgroundColor: 'var(--accent)', 
+                  color: 'white', 
+                  padding: '2px 8px', 
+                  borderRadius: '4px', 
+                  fontSize: '12px', 
+                  fontWeight: 700,
+                  marginRight: 10,
+                  fontFamily: 'monospace',
+                  cursor: 'pointer'
+                }}
+                onClick={() => {
+                  navigator.clipboard.writeText(shortId);
+                }}
+                title="ID'yi kopyalamak için tıklayın"
+              >
+                #{shortId}
+              </span>
               {it.isUrgent && it.status !== 'resolved' && <span style={{ color: '#f44', marginRight: 8, fontWeight: 'bold' }}>🔴 ACİL</span>}
               <span>Temsilci : </span>{sender}
             </div>

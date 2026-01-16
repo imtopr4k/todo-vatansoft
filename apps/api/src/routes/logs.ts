@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { requireAuth } from '../middlewares/auth';
 import { BotLog } from '../models/BotLog';
 import { Agent } from '../models/Agent';
+import { Ticket } from '../models/Ticket';
 
 const r = Router();
 r.use(requireAuth);
@@ -86,6 +87,99 @@ r.post('/', async (req, res) => {
     return res.json({ success: true, id: String(log._id) });
   } catch (e) {
     console.error('Error saving log:', e);
+    return res.status(500).json({ message: 'Internal error' });
+  }
+});
+
+// GET /logs/tickets - Ticket history logları (1 aylık)
+r.get('/tickets', async (req, res) => {
+  try {
+    const auth = (req as any).auth as { sub: string; role: 'agent' | 'supervisor' };
+    
+    // Kullanıcıyı kontrol et (sadece 1009)
+    const agent = await Agent.findById(auth.sub).lean();
+    if (!agent || String(agent.externalUserId) !== '1009') {
+      return res.status(403).json({ message: 'Bu sayfaya erişim yetkiniz yok' });
+    }
+
+    let { page, limit, action, agentId } = req.query as any;
+    page = Number.isFinite(+page) && +page > 0 ? Math.floor(+page) : 1;
+    limit = Number.isFinite(+limit) && +limit > 0 ? Math.min(1000, Math.floor(+limit)) : 100;
+
+    // 1 ay öncesi
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+
+    const query: any = {
+      'history.0': { $exists: true }, // En az 1 history kaydı olan
+      updatedAt: { $gte: oneMonthAgo } // 1 ay içinde güncellenmiş
+    };
+
+    const tickets = await Ticket.find(query)
+      .populate('assignedTo', 'name externalUserId')
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    // Tüm history kayıtlarını düzleştir ve filtrele
+    let allHistory: any[] = [];
+    for (const ticket of tickets) {
+      const shortId = String(ticket._id).slice(-6).toUpperCase();
+      const assignedAgent = ticket.assignedTo as any;
+      
+      if (ticket.history && ticket.history.length > 0) {
+        for (const h of ticket.history) {
+          // 1 ay kontrolü
+          if (new Date(h.at) < oneMonthAgo) continue;
+          
+          // Action filtresi
+          if (action && h.action !== action) continue;
+          
+          // Agent ID filtresi
+          if (agentId && String(h.byAgentId) !== String(agentId)) continue;
+          
+          allHistory.push({
+            ticketId: String(ticket._id),
+            shortId,
+            ticketStatus: ticket.status,
+            assignedToName: assignedAgent?.name || 'Atanmamış',
+            timestamp: h.at,
+            action: h.action,
+            note: h.note,
+            byAgentId: h.byAgentId ? String(h.byAgentId) : undefined,
+            senderName: ticket.telegram?.from?.displayName || ticket.telegram?.from?.username || 'Bilinmiyor'
+          });
+        }
+      }
+    }
+
+    // Zamana göre sırala (en yeni en üstte)
+    allHistory.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    // Pagination
+    const total = allHistory.length;
+    const skip = (page - 1) * limit;
+    const items = allHistory.slice(skip, skip + limit);
+
+    // Agent isimleri için populate
+    const agentIds = [...new Set(items.map(i => i.byAgentId).filter(Boolean))];
+    const agents = await Agent.find({ _id: { $in: agentIds } }).select('_id name').lean();
+    const agentMap = new Map(agents.map(a => [String(a._id), a.name]));
+
+    // Agent isimlerini ekle
+    const itemsWithAgents = items.map(i => ({
+      ...i,
+      byAgentName: i.byAgentId ? agentMap.get(i.byAgentId) || 'Bilinmiyor' : undefined
+    }));
+
+    return res.json({
+      items: itemsWithAgents,
+      page,
+      limit,
+      total,
+      pages: Math.max(1, Math.ceil(total / limit))
+    });
+  } catch (e) {
+    console.error('Error fetching ticket logs:', e);
     return res.status(500).json({ message: 'Internal error' });
   }
 });

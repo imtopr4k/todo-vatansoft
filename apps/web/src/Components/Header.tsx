@@ -95,6 +95,7 @@ export default function Header() {
 
   // Get current page name
   const getPageName = () => {
+    if (location.pathname === '/' || location.pathname === '/dashboard') return 'Dashboard';
     if (location.pathname === '/tickets') return 'Görevler';
     if (location.pathname === '/chat') return 'Sohbet';
     if (location.pathname === '/stats') return 'İstatistik';
@@ -169,6 +170,36 @@ export default function Header() {
                 overflow: 'hidden',
               }}
             >
+              <Link 
+                to="/" 
+                onClick={() => setMenuOpen(false)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '12px 16px',
+                  color: location.pathname === '/' ? 'var(--primary, #3b82f6)' : 'var(--text)',
+                  textDecoration: 'none',
+                  fontWeight: location.pathname === '/' ? 600 : 500,
+                  fontSize: '14px',
+                  backgroundColor: location.pathname === '/' ? 'var(--hover-bg, rgba(59,130,246,0.1))' : 'transparent',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={(e) => {
+                  if (location.pathname !== '/') {
+                    e.currentTarget.style.backgroundColor = 'var(--hover-bg, rgba(255,255,255,0.05))';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (location.pathname !== '/') {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }
+                }}
+              >
+                <span>🏠</span>
+                <span>Dashboard</span>
+              </Link>
+
               <Link 
                 to="/tickets" 
                 onClick={() => setMenuOpen(false)}

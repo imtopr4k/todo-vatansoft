@@ -22,8 +22,10 @@ const TicketSchema = new mongoose_1.Schema({
     status: { type: String, enum: ['open', 'resolved', 'unreachable', 'reported', 'waiting'], default: 'open' },
     assignedTo: { type: mongoose_1.Types.ObjectId, ref: 'Agent' },
     assignedAt: { type: Date, default: Date.now },
+    isUrgent: { type: Boolean, default: false },
     resolutionText: { type: String },
     scheduledDMAt: { type: Date },
+    unattendedWarningAt: { type: Date }, // 5dk uyarısı gönderildi mi
     interestedBy: { type: mongoose_1.Types.ObjectId, ref: 'Agent' },
     interestedAt: { type: Date },
     // Analysis data: agents can record difficulty and notes for the ticket
