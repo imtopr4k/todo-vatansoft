@@ -161,6 +161,20 @@ r.post('/:id/resolve', async (req, res) => {
     // History'ye log ekle
     t.history = t.history || [];
     const actor = await Agent.findById(auth.sub).lean();
+    
+    // Eğer çözümleyen agent, ticket'ın atandığı agent değilse, yeniden ata
+    const previouslyAssignedTo = String(t.assignedTo);
+    if (previouslyAssignedTo !== auth.sub) {
+      t.assignedTo = new Types.ObjectId(auth.sub);
+      t.assignedAt = new Date();
+      t.history.push({
+        at: new Date(),
+        byAgentId: auth.sub,
+        action: 'reassigned',
+        note: `Ticket ${actor?.name || 'Agent'} tarafından çözümlendiği için otomatik olarak yeniden atandı`
+      });
+    }
+    
     t.history.push({
       at: new Date(),
       byAgentId: auth.sub,
